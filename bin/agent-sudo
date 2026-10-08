@@ -24,7 +24,7 @@ usage: agent-sudo --reason "why this needs root" [--agent NAME] [--timeout SECS]
 
 Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
          ~/.config/agent-sudo/config (then /etc/xdg/agent-sudo/config).
-Exit codes: 77 denied or timed out · 69 no way to ask Pat · 64 usage
+Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
             otherwise the command's own exit code.
 Log: ~/.local/state/agent-sudo/log.tsv
 EOF
@@ -32,6 +32,9 @@ EOF
 }
 
 die() { echo "agent-sudo: $1" >&2; exit "${2:-$EX_USAGE}"; }
+
+# The human who approves, named in messages to the agent.
+human=${USER:-$(id -un)}
 
 reason='' agent='' timeout=180
 while [ $# -gt 0 ]; do
@@ -114,7 +117,7 @@ nnp=$(awk '/^NoNewPrivs:/{print $2}' /proc/self/status)
 
 if [ -z "${WAYLAND_DISPLAY-}${DISPLAY-}" ]; then
   log no-display -
-  die "no graphical session to show the approval dialog; give Pat the command to run" $EX_NODISPLAY
+  die "no graphical session to show the approval dialog; give $human the command to run" $EX_NODISPLAY
 fi
 
 want=${AGENT_SUDO_BACKEND:-$(config_backend)}
@@ -126,7 +129,7 @@ case $want in
       # (A sandbox may hide other processes, so don't rely on spotting an agent.)
       if command -v run0 >/dev/null && system_bus_reachable; then backend=run0; else
         log sandboxed -
-        die "running inside a sandbox that blocks every way to ask Pat; re-run this exact agent-sudo call outside the sandbox (Codex: request escalation), or give Pat the command" $EX_NODISPLAY
+        die "running inside a sandbox that blocks every way to ask $human; re-run this exact agent-sudo call outside the sandbox (Codex: request escalation), or give $human the command" $EX_NODISPLAY
       fi
     elif command -v pkexec >/dev/null && polkit_agent_running; then
       backend=pkexec
@@ -137,7 +140,7 @@ case $want in
 esac
 if [ "$nnp" = 1 ] && [ "$backend" != run0 ]; then
   log no-new-privs -
-  die "running sandboxed (no_new_privs): $backend can't escalate here; use backend run0 with a polkit agent, run outside the sandbox, or give Pat the command" $EX_NODISPLAY
+  die "running sandboxed (no_new_privs): $backend can't escalate here; use backend run0 with a polkit agent, run outside the sandbox, or give $human the command" $EX_NODISPLAY
 fi
 command -v "$backend" >/dev/null || die "backend '$backend' is not installed" $EX_NODISPLAY
 
@@ -205,7 +208,7 @@ run_sudo() {
   AGENT_SUDO_MODE=askpass SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
   rc=$?
   case $(tail -n1 "$status") in
-    denied)   denied denied "denied by Pat" ;;
+    denied)   denied denied "denied by $human" ;;
     timeout)  denied timeout "timed out with no answer" ;;
     approved) log approved "$rc" ;;
     '')       log no-prompt "$rc" ;;   # NOPASSWD rule matched, or sudo refused before asking
@@ -218,7 +221,7 @@ run_sudo() {
 # pkexec / run0: our review first, then the system prompt for the password.
 AGENT_SUDO_MODE=review "$dialog" </dev/null
 case $(tail -n1 "$status") in
-  denied)  denied denied "denied by Pat" ;;
+  denied)  denied denied "denied by $human" ;;
   timeout) denied timeout "timed out with no answer" ;;
 esac
 
