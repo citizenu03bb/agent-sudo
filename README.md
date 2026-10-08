@@ -86,7 +86,13 @@ Root doesn't only come through sudo. On a desktop, plain `systemctl restart`, `p
 
 ## Known gap
 
-Skills load on demand. In benchmarks, Pi and Antigravity read the skill before acting, but Claude often tried `sudo -n` or a plain `systemctl` first and only loaded the skill after that failed. The worst outcome is a prompt you can refuse, since nothing runs as root without your approval, but expect the occasional extra click. This should shrink as agents get better at loading skills before acting.
+Skills load on demand. In benchmarks, Pi and Antigravity read the skill before acting, but Claude often tried `sudo -n` or a plain `systemctl` first and only loaded the skill after that failed. What that costs depends on your login:
+
+- While your sudo login is fresh, such a `sudo -n` succeeds: the command runs as root without going through agent-sudo, so it isn't logged with an agent and a reason. That is no more access than sudo already grants under your login, but it is a gap in the record.
+- When the login has expired, it fails, and the agent then uses agent-sudo.
+- A plain `systemctl restart` (or `pkcon`, `nmcli`…) goes to polkit directly: the desktop's own prompt, which doesn't name the agent, or no prompt if polkit still remembers a recent approval.
+
+A command guard that intercepts the agent's shell commands closes this gap. It should also shrink as agents get better at loading skills before acting.
 
 ## Layout
 
