@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # Dialogs for agent-sudo. Modes (AGENT_SUDO_MODE):
-#   collect  sudo backend, before sudo runs: show who / what / why and read the
-#            password (typing it approves), printed on stdout for agent-sudo.
-#   feed     SUDO_ASKPASS for the sudo backend: hand sudo the collected password
-#            once (from $AGENT_SUDO_PWFIFO); if sudo asks again, or nothing was
-#            collected, ask like askpass.
-#   askpass  SUDO_ASKPASS when sudoers decides (nopasswd = trust): the password
-#            prompt is the review.
-#   review   Approve / Deny only: pkexec and run0 (the system's polkit prompt asks
-#            the password), and sudo when sudoers needs no password.
-# Records each outcome in $AGENT_SUDO_STATUS. Long requests (big scripts,
-# heredoc stdin) are shown in a scrollable review window.
+#   askpass   SUDO_ASKPASS for the sudo backend (default, confirm = auth): shown
+#             only when sudo needs the password; this prompt is the review.
+#   review    Approve / Deny before anything runs (confirm = always).
+#   password  SUDO_ASKPASS after an approved review (confirm = always): shown
+#             only if sudo still needs the password.
+# The password goes from zenity straight to sudo on stdout; agent-sudo never
+# sees it. Records each outcome in $AGENT_SUDO_STATUS. Long requests (big
+# scripts, heredoc stdin) are shown in a scrollable review window.
 
 set -u
 [ -n "${AGENT_SUDO_STATUS-}" ] && [ -r "${AGENT_SUDO_REVIEW-}" ] \
@@ -27,7 +24,6 @@ tries=$(cat "$tries_file" 2>/dev/null || echo 0)
 given() { echo $((tries + 1)) >"$tries_file"; }
 deny_from() { [ "$1" -eq 5 ] && record timeout || record denied; exit 1; }
 
-attempts=$(grep -c . "$AGENT_SUDO_STATUS")
 lines=$(wc -l <"$AGENT_SUDO_REVIEW")
 chars=$(wc -c <"$AGENT_SUDO_REVIEW")
 inline=0
@@ -62,16 +58,6 @@ else
 shown in the review window."
 fi
 
-if [ "$mode" = feed ]; then
-  fed=$(dirname "$AGENT_SUDO_STATUS")/fed
-  if [ -n "${AGENT_SUDO_PWFIFO-}" ] && [ ! -e "$fed" ]; then
-    : >"$fed"; given
-    cat "$AGENT_SUDO_PWFIFO"
-    exit 0
-  fi
-  mode=askpass   # sudo asked again, or no password was collected: ask now
-fi
-
 if [ "$mode" = review ]; then
   if [ $inline -eq 1 ]; then
     zenity --question --no-markup --title="agent-sudo: root request" --width=680 \
@@ -80,7 +66,7 @@ if [ "$mode" = review ]; then
 ${context}
 
 
-${AGENT_SUDO_HINT:-Approve, then confirm with your password in the system prompt.}" \
+${AGENT_SUDO_HINT:-Approve to run it. The system may ask for your password next.}" \
       --ok-label=Approve --cancel-label=Deny --timeout="$timeout" 2>/dev/null
   else
     review_window "Approve"
@@ -90,29 +76,42 @@ ${AGENT_SUDO_HINT:-Approve, then confirm with your password in the system prompt
   deny_from $rc
 fi
 
-# askpass and collect modes
-if [ $inline -eq 0 ] && [ "$attempts" -eq 0 ]; then
-  review_window "Continue to approval" || deny_from $?
-fi
-
 retry=''
 [ "$tries" -gt 0 ] && retry=$'WRONG PASSWORD, try again.\n\n'
 
-pw=$(zenity --entry --hide-text \
-  --title="agent-sudo: root request" --width=680 \
-  --text="${retry}${what}
+if [ "$mode" = password ]; then
+  # Already reviewed and approved: just say what the password is for.
+  title="agent-sudo: password"
+  text="${retry}You approved this request from ${AGENT_SUDO_AGENT}:
+
+$(head -n 3 "$AGENT_SUDO_REVIEW" | cut -c1-120 | sed 's/^/    /')$([ "$lines" -gt 3 ] && printf '\n    …')
+
+sudo needs your password to run it, and then remembers your login for a
+few minutes."
+  ok=Run
+else
+  # askpass: the password prompt is the review.
+  if [ $inline -eq 0 ] && [ "$tries" -eq 0 ]; then
+    review_window "Continue to approval" || deny_from $?
+  fi
+  title="agent-sudo: root request"
+  text="${retry}${what}
 
 ${context}
 
 
-Type your password to approve this one command." \
-  --ok-label=Approve --cancel-label=Deny \
-  --timeout="$timeout" 2>/dev/null)
+Type your password to run it. sudo then remembers your login for a few
+minutes, so requests in that window run without asking."
+  ok=Approve
+fi
+
+pw=$(zenity --entry --hide-text --title="$title" --width=680 --text="$text" \
+  --ok-label="$ok" --cancel-label=Deny --timeout="$timeout" 2>/dev/null)
 rc=$?
 
 if [ $rc -eq 0 ] && [ -n "$pw" ]; then
   record approved
-  [ "$mode" = collect ] || given   # collect: agent-sudo hands it to sudo via feed
+  given
   printf '%s\n' "$pw"
   exit 0
 fi

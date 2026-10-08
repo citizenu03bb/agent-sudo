@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
-# Stand-in for pkcheck in tests.
+# Stand-in for pkcheck in tests; records calls in $FAKE_PKCHECK_CALLS.
+[ -n "${FAKE_PKCHECK_CALLS-}" ] && printf '%s\n' "$*" >>"$FAKE_PKCHECK_CALLS"
 exit 0

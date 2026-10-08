@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stand-in for id in tests: FAKE_ID_GROUPS overrides `id -nG`; anything else is real.
+if [ "$*" = "-nG" ] && [ -n "${FAKE_ID_GROUPS-}" ]; then echo "$FAKE_ID_GROUPS"; exit 0; fi
+exec /usr/bin/id "$@"

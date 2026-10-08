@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # agent-sudo — run one root command on behalf of a coding agent (Claude Code,
-# Codex, Pi, Antigravity), gated by a desktop dialog that shows exactly what will run.
+# Codex, Pi, Antigravity), with a desktop prompt when authentication is needed.
 #
+# Consent (AGENT_SUDO_CONFIRM, else `confirm =` in agent-sudo/config):
+#   auth    (default) no dialog of agent-sudo's own: the backend's remembered
+#           login decides. A prompt appears only when it asks for the password.
+#   always  an Approve / Deny dialog before every command, then the backend's
+#           prompt if it needs one.
 # Backends (AGENT_SUDO_BACKEND, else `backend =` in agent-sudo/config under
 # $XDG_CONFIG_HOME then $XDG_CONFIG_DIRS, else auto):
-#   sudo    zenity review (with the password, when sudo will want one) before
-#           sudo runs, then sudo -A fed from it. `-k` ignores any cached login
-#           (timestamp_type=global would let agents piggyback) and saves none.
-#           A NOPASSWD rule skips the password, not the review (nopasswd = trust
-#           restores "sudoers decides").
-#   pkexec  zenity review, then the desktop's polkit prompt (auth_admin, no keep).
-#   run0    zenity review, then polkit via systemd; not setuid, so it can work
-#           under no_new_privs. Its polkit action defaults to auth_admin_keep,
-#           so temporary authorizations are revoked before and after each call.
-#   auto    sandboxed (no_new_privs)? run0 if the system bus is reachable,
-#           else ask for escalation : polkit agent running? pkexec : sudo.
-# The password never passes through the agent.
+#   sudo    sudo -A with a zenity password dialog as askpass, which shows the
+#           whole request. Uses and renews the user's sudo login (no -k).
+#   pkexec  the desktop's polkit prompt, every time (auth_admin).
+#   run0    polkit via systemd; not setuid, so it can work under no_new_privs.
+#           polkit remembers an approval for a few minutes (auth_admin_keep).
+#   auto    sandboxed (no_new_privs)? run0 if the system bus is reachable, else
+#           ask for escalation : in the sudo/wheel/admin group? sudo :
+#           polkit agent running? pkexec : sudo.
+# The password goes from the prompt to sudo or polkit, never through the agent.
 
 set -uo pipefail
 
@@ -30,9 +32,9 @@ Dry run: AGENT_SUDO_DRY_RUN=FILE records each request as a JSON line and
          without a dialog; nothing is executed.
 Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
          ~/.config/agent-sudo/config (then /etc/xdg/agent-sudo/config).
-NOPASSWD: AGENT_SUDO_NOPASSWD=review|trust, or `nopasswd = ...` there. review
-         (default) shows the dialog even when sudoers needs no password; trust
-         lets sudoers decide, so such commands run with no dialog, only logged.
+Confirm: AGENT_SUDO_CONFIRM=auth|always, or `confirm = ...` there. auth
+         (default) prompts only when authentication is needed; always adds an
+         Approve / Deny dialog before every command.
 Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
             otherwise the command's own exit code.
 Log: ~/.local/state/agent-sudo/log.tsv
@@ -119,6 +121,11 @@ polkit_agent_running() {
   pgrep -u "$UID" -f -- '(^|/)(gnome-shell|cinnamon|polkit-[a-z]+-authentication-agent-1|lxqt-policykit-agent|lxpolkit|xfce-polkit|hyprpolkitagent|budgie-polkit-dialog)( |$)' >/dev/null
 }
 
+# Members of these groups can usually sudo; checked without calling sudo.
+in_admin_group() {
+  [[ " $(id -nG 2>/dev/null) " =~ \ (sudo|wheel|admin)\  ]]
+}
+
 system_bus_reachable() {
   timeout 3 busctl --system call org.freedesktop.DBus /org/freedesktop/DBus \
     org.freedesktop.DBus GetId >/dev/null 2>&1
@@ -142,10 +149,8 @@ if [ -z "${WAYLAND_DISPLAY-}${DISPLAY-}" ]; then
 fi
 
 want=${AGENT_SUDO_BACKEND:-$(config_get backend auto)}
-# NOPASSWD rules: `review` (default) still shows agent-sudo's dialog; `trust` lets
-# sudoers decide, so a matching command runs with no dialog (logged only).
-nopasswd=${AGENT_SUDO_NOPASSWD:-$(config_get nopasswd review)}
-case $nopasswd in review|trust) ;; *) die "unknown nopasswd setting '$nopasswd' (review, trust)" ;; esac
+confirm=${AGENT_SUDO_CONFIRM:-$(config_get confirm auth)}
+case $confirm in auth|always) ;; *) die "unknown confirm setting '$confirm' (auth, always)" ;; esac
 case $want in
   sudo|pkexec|run0) backend=$want ;;
   auto)
@@ -156,6 +161,8 @@ case $want in
         log sandboxed -
         die "running inside a sandbox that blocks every way to ask $human; re-run this exact agent-sudo call outside the sandbox (Codex: request escalation), or give $human the command" $EX_NODISPLAY
       fi
+    elif command -v sudo >/dev/null && in_admin_group; then
+      backend=sudo   # sudo's remembered login keeps prompts rare; pkexec asks every time
     elif command -v pkexec >/dev/null && polkit_agent_running; then
       backend=pkexec
     else
@@ -179,7 +186,7 @@ for d in "${XDG_RUNTIME_DIR-}" /tmp /dev/shm; do
   [ -n "$d" ] && tmp=$(mktemp -d "$d/agent-sudo.XXXXXX" 2>/dev/null) && break
 done
 [ -n "$tmp" ] || die "no writable temp directory" 70
-trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$tmp"' EXIT   # jobs: a password FIFO writer
+trap 'rm -rf "$tmp"' EXIT
 status=$tmp/status review=$tmp/review stdin_file=''
 : >"$status"
 
@@ -266,68 +273,42 @@ require_approval() {  # $1 = the dialog's exit code
 }
 
 run_sudo() {
-  if [ "$nopasswd" = trust ]; then
-    # sudoers decides: the password prompt is the review, so a NOPASSWD match runs
-    # with no dialog at all and is only logged.
-    AGENT_SUDO_MODE=askpass SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
-    rc=$?
-    case $(tail -n1 "$status") in
-      denied)   denied denied "denied by $human" ;;
-      timeout)  denied timeout "timed out with no answer" ;;
-      approved) log approved "$rc" ;;
-      *)        log nopasswd-trusted "$rc" ;;
-    esac
-    exit $rc
-  fi
-
-  # Review first, always: a NOPASSWD rule saves the password, not the approval.
-  # `sudo -n -l` only picks which dialog to show. It can be wrong (sudoers'
-  # default listpw=any wants a password for -l unless every rule is NOPASSWD),
-  # and that must never let a command run unreviewed, so the review happens
-  # before sudo whatever it says; at worst it asks for a password not needed.
-  local nopw=0 pw='' gate writer=''
-  sudo -k -n -l -- "$@" >/dev/null 2>&1 </dev/null && nopw=1
-  if [ $nopw = 1 ]; then
-    AGENT_SUDO_MODE=review AGENT_SUDO_HINT="Your sudoers lets this run without a password; approving runs it." \
+  # auth: no dialog of our own; sudo uses the user's login if it is still fresh
+  # (or a NOPASSWD rule), and otherwise asks through the password dialog, which
+  # shows the whole request. No -k: a successful run renews the login.
+  # always: an Approve click first, then the password dialog only if sudo asks.
+  local mode=askpass
+  if [ "$confirm" = always ]; then
+    AGENT_SUDO_MODE=review AGENT_SUDO_HINT="Approve to run it. If sudo needs your password, it will ask next." \
       "$dialog" </dev/null
-    gate=$?
-  else
-    pw=$(AGENT_SUDO_MODE=collect "$dialog" </dev/null)
-    gate=$?
+    require_approval $?
+    mode=password
   fi
-  require_approval $gate
-
-  # Hand the password to sudo only if it asks, through a private FIFO (never on disk).
-  local fifo=''
-  if [ -n "$pw" ]; then
-    fifo=$tmp/pw
-    mkfifo -m 600 "$fifo" || denied review-failed "could not pass the password to sudo"
-    { printf '%s\n' "$pw" >"$fifo"; } 2>/dev/null &
-    writer=$!
-    pw=''
-  fi
-  AGENT_SUDO_MODE=feed AGENT_SUDO_PWFIFO=$fifo SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
+  AGENT_SUDO_MODE=$mode SUDO_ASKPASS=$dialog sudo -A -- "$@"
   rc=$?
-  [ -z "$writer" ] || { kill "$writer" 2>/dev/null; wait "$writer" 2>/dev/null; }
   case $(tail -n1 "$status") in
-    denied)  denied denied "cancelled at the password prompt" ;;
+    denied)  denied denied "denied by $human at the password prompt" ;;
     timeout) denied timeout "timed out at the password prompt" ;;
   esac
-  if [ $nopw = 1 ]; then log approved-nopasswd "$rc"; else log approved "$rc"; fi
+  if [ "$confirm" = always ] || [ -s "$tmp/tries" ]; then log approved "$rc"
+  else log cached "$rc"; fi   # no prompt: a fresh sudo login or a NOPASSWD rule
   exit $rc
 }
 
 [ "$backend" = sudo ] && run_sudo "$@"
 
-# pkexec / run0: our review first, then the system prompt for the password.
-AGENT_SUDO_MODE=review "$dialog" </dev/null
-require_approval $?
+# pkexec / run0: polkit authenticates (pkexec every time, run0 remembers a few
+# minutes); with confirm = always, our Approve dialog comes first.
+if [ "$confirm" = always ]; then
+  AGENT_SUDO_MODE=review "$dialog" </dev/null
+  require_approval $?
+fi
 
 if [ "$backend" = pkexec ]; then
   run_polkit pkexec --disable-internal-agent --keep-cwd "$@"
   if grep -q 'Error executing command as another user' "$tmp/err" 2>/dev/null; then
     if grep -q 'No authentication agent found' "$tmp/err" && [ "$want" = auto ]; then
-      echo "agent-sudo: no polkit agent answered; falling back to the sudo dialog" >&2
+      echo "agent-sudo: no polkit agent answered; falling back to sudo" >&2
       backend=sudo; : >"$status"
       run_sudo "$@"
     fi
@@ -335,13 +316,11 @@ if [ "$backend" = pkexec ]; then
     denied auth-failed "not authorized by polkit"
   fi
 else
-  pkcheck --revoke-temp 2>/dev/null
   run_polkit run0 --background= --chdir="$PWD" -- "$@"
-  pkcheck --revoke-temp 2>/dev/null || echo "agent-sudo: warning: could not revoke polkit temporary authorizations" >&2
   if grep -qE 'Interactive authentication required|Access denied|authentication (failed|cancel)' "$tmp/err" 2>/dev/null \
      && grep -q 'Failed to' "$tmp/err"; then
     denied auth-failed "not authorized by polkit"
   fi
 fi
-log approved "$rc"
+if [ "$confirm" = always ]; then log approved "$rc"; else log polkit "$rc"; fi
 exit $rc

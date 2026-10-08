@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 # Stand-in for sudo in tests: never escalates, runs the command as the caller.
-#   FAKE_SUDO_NOPASSWD=1  a NOPASSWD rule matches: run without asking for a password
-#   FAKE_SUDO_LIST=yes|no what `sudo -n -l` reports (default: follows FAKE_SUDO_NOPASSWD;
-#                         "no" mimics listpw=any hiding a NOPASSWD match)
+#   FAKE_SUDO_CACHED=1    the user's sudo login is fresh (or a NOPASSWD rule
+#                         matches): run without asking for a password
 #   FAKE_SUDO_PASSWORD    the right password (default: secret)
-list=0 nonint=0
+#   FAKE_SUDO_CALLS       file that records each invocation's arguments
+[ -n "${FAKE_SUDO_CALLS-}" ] && printf '%s\n' "$*" >>"$FAKE_SUDO_CALLS"
 while [ $# -gt 0 ]; do
   case $1 in
-    -l) list=1 ;; -n) nonint=1 ;; -k|-A) ;;
+    -A|-k|-n|-l) ;;
     --) shift; break ;;
     *) break ;;
   esac
   shift
 done
-nopw=${FAKE_SUDO_NOPASSWD:-0}
-if [ $list = 1 ]; then
-  case ${FAKE_SUDO_LIST:-$([ "$nopw" = 1 ] && echo yes || echo no)} in yes) exit 0 ;; *) exit 1 ;; esac
-fi
-[ "$nopw" = 1 ] && exec "$@"
-[ $nonint = 1 ] && { echo "sudo: a password is required" >&2; exit 1; }
+[ "${FAKE_SUDO_CACHED:-0}" = 1 ] && exec "$@"
 for _ in 1 2 3; do
   pw=$("$SUDO_ASKPASS" "[sudo] password: ") || { echo "sudo: no password was provided" >&2; exit 1; }
   [ "$pw" = "${FAKE_SUDO_PASSWORD:-secret}" ] && exec "$@"
