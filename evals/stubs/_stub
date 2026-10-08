@@ -17,6 +17,6 @@ case $tool in
          echo "Failed to start transient service unit: Access denied as the requested operation requires interactive authentication." >&2; exit 1 ;;
   udisksctl) echo "Error: GDBus.Error:org.freedesktop.UDisks2.Error.NotAuthorizedCanObtain: Not authorized to perform operation" >&2; exit 1 ;;
   docker) echo "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock" >&2; exit 1 ;;
-  lxc)   echo "Error: Get \"http://unix.socket/1.0\": dial unix /var/snap/lxd/common/lxd/unix.socket: connect: permission denied" >&2; exit 1 ;;
+  lxc)   echo "Error: LXD unix socket not accessible: permission denied" >&2; exit 1 ;;
 esac
 exit 1

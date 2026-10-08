@@ -10,7 +10,7 @@ root=$(dirname "$here")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-export PATH="$here/fakebin:$root/skills/agent-sudo/scripts:$PATH"
+export PATH="$here/fakebin:$root/plugin/skills/agent-sudo/scripts:$PATH"
 export XDG_STATE_HOME=$work/state XDG_CONFIG_HOME=$work/config XDG_CONFIG_DIRS=$work/etc-xdg
 export FAKE_ZENITY_OUT=$work/dialogs
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-test}

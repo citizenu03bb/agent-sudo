@@ -2,7 +2,7 @@
 # Symlink agent-sudo into PATH and the skill into each agent's skill directory.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-skill=$here/skills/agent-sudo
+skill=$here/plugin/skills/agent-sudo
 
 chmod +x "$skill/scripts/agent-sudo" "$skill/scripts/agent-sudo-dialog"
 mkdir -p "$HOME/.local/bin"

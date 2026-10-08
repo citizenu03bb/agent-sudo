@@ -8,9 +8,9 @@
   "plugins": [
     {
       "name": "agent-sudo",
-      "source": "./",
+      "source": "./plugin",
       "description": "Root for coding agents with a human in the loop: an approval dialog for every sudo or polkit request. Linux desktop.",
-      "version": "0.2.1"
+      "version": "0.2.2"
     }
   ]
 }
