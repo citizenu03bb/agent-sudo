@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Stand-in for zenity in tests. Records what would be shown in $FAKE_ZENITY_OUT.
-# It never approves: password and review dialogs always answer Deny. The only
-# "continue" is the long-request review window in askpass mode, which is
-# followed by the (denied) password dialog.
+# FAKE_ZENITY_ANSWER: deny (default) answers Deny to password and review dialogs;
+# approve answers Approve, typing $FAKE_ZENITY_PASSWORD (default: secret);
+# crash kills the dialog helper before it can record anything. In the default
+# deny mode the only "continue" is the long-request review window in the
+# password modes, which is followed by the (denied) password dialog.
 
 {
   for a in "$@"; do
@@ -15,7 +17,13 @@
   done
 } >>"${FAKE_ZENITY_OUT:-/dev/null}"
 
-if [ "${AGENT_SUDO_MODE-}" = askpass ]; then
+case ${FAKE_ZENITY_ANSWER:-deny} in
+  approve)
+    case " $* " in *" --entry "*) printf '%s\n' "${FAKE_ZENITY_PASSWORD:-secret}" ;; esac
+    exit 0 ;;
+  crash) kill -9 "$PPID"; exit 1 ;;
+esac
+case ${AGENT_SUDO_MODE-} in askpass|collect|feed)
   case " $* " in *" --text-info "*) exit 0 ;; esac
-fi
+esac
 exit 1

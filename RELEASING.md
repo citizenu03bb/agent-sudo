@@ -7,10 +7,10 @@
 3. Bump `version` in `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (keep them equal).
 4. Commit, then tag and push:
    ```bash
-   git tag -a v0.2.2 -m "agent-sudo 0.2.2"
+   git tag -a v0.3.0 -m "agent-sudo 0.3.0"
    git push origin main --tags
    ```
-5. Optional: `gh release create v0.2.2 --generate-notes`.
+5. Optional: `gh release create v0.3.0 --generate-notes`.
 
 The skill lives in one place, `plugin/skills/agent-sudo/`, and every channel installs from it: `npx skills add`, the Claude Code plugin, and `install.sh`.
 

@@ -46,7 +46,7 @@ Every request is logged to `~/.local/state/agent-sudo/log.tsv`. The user can mak
 
 ## Backends
 
-The user picks the backend; you don't. `AGENT_SUDO_BACKEND` or `~/.config/agent-sudo/config` (`backend = auto|sudo|pkexec|run0`), default `auto`. Depending on it, the user either types the password in agent-sudo's dialog (sudo), or approves in agent-sudo's review window and then types it in the desktop's own polkit prompt (pkexec, run0). Either way, the command runs only after the user approves.
+The user picks the backend; you don't. `AGENT_SUDO_BACKEND` or `~/.config/agent-sudo/config` (`backend = auto|sudo|pkexec|run0`), default `auto`. Depending on it, the user either types the password in agent-sudo's dialog (sudo; just Approve if their sudoers needs no password), or approves in agent-sudo's review window and then types it in the desktop's own polkit prompt (pkexec, run0). Either way, the command runs only after the user approves.
 
 ## Per-agent notes
 

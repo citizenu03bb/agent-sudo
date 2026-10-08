@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Non-interactive tests for agent-sudo. A fake zenity answers every dialog with
-# Deny, so no command ever runs as root and no real password prompt appears.
-# Uses throwaway XDG dirs, so the real log and config are untouched.
+# Non-interactive tests for agent-sudo. Fake zenity, sudo, pkexec, run0 and
+# pkcheck (tests/fakebin) stand in for the real ones: nothing ever runs as root
+# and no real password prompt appears. zenity answers Deny unless a test sets
+# FAKE_ZENITY_ANSWER. Throwaway XDG dirs keep the real log and config untouched.
 
 # shellcheck disable=SC2319  # check() deliberately takes the status of a [ ] test
 set -u
@@ -79,6 +80,55 @@ check "dry run: scripted deny" 77 $? 'denied by'
 
 grep -q . "$work/state/agent-sudo/log.tsv" && ! grep -q approved "$work/state/agent-sudo/log.tsv"
 check "nothing was ever approved" 0 $?
+
+# --- approvals (fakes run the command as the caller; a marker file shows it ran) ---
+ran=$work/ran
+dialogs() { grep -c '^=== ' "$FAKE_ZENITY_OUT"; }
+attempt() { rm -f "$ran"; run env AGENT_SUDO_BACKEND=sudo "$@" agent-sudo --reason "touch marker" -- touch "$ran"; }
+
+attempt FAKE_SUDO_NOPASSWD=1
+check "NOPASSWD still opens the review" 77 $? 'without a password; approving runs it'
+[ ! -e "$ran" ];                                           check "NOPASSWD + deny: nothing ran" 0 $?
+attempt FAKE_SUDO_NOPASSWD=1 FAKE_ZENITY_ANSWER=approve
+check "NOPASSWD + approve runs it" 0 $? '=== --question'
+[ -e "$ran" ] && [ "$(dialogs)" = 1 ] && [ "$(last_log 3)" = approved-nopasswd ]
+check "NOPASSWD: one dialog, logged approved-nopasswd" 0 $?
+
+attempt FAKE_ZENITY_ANSWER=approve
+check "password typed before sudo runs" 0 $? '=== --entry'
+[ -e "$ran" ] && [ "$(dialogs)" = 1 ] && [ "$(last_log 3)" = approved ]
+check "password case: one dialog, password fed to sudo" 0 $?
+attempt FAKE_ZENITY_ANSWER=approve FAKE_ZENITY_PASSWORD=wrong
+check "wrong password: sudo fails" 1 $? 'WRONG PASSWORD'
+[ ! -e "$ran" ];                                           check "wrong password: nothing ran" 0 $?
+
+attempt FAKE_SUDO_NOPASSWD=1 FAKE_SUDO_LIST=no FAKE_ZENITY_ANSWER=approve
+check "sudo -l hides NOPASSWD (listpw): reviewed via password dialog" 0 $? '=== --entry'
+[ -e "$ran" ] && [ "$(dialogs)" = 1 ];                     check "hidden NOPASSWD: ran after one dialog" 0 $?
+attempt FAKE_SUDO_LIST=yes FAKE_ZENITY_ANSWER=approve
+check "sudo -l wrongly says NOPASSWD: password asked after review" 0 $? '=== --entry'
+[ -e "$ran" ] && [ "$(dialogs)" = 2 ] && ! grep -q 'WRONG PASSWORD' "$FAKE_ZENITY_OUT"
+check "wrong guess: review then password, no false retry" 0 $?
+
+attempt AGENT_SUDO_NOPASSWD=trust FAKE_SUDO_NOPASSWD=1
+check "nopasswd = trust: sudoers decides" 0 $?
+[ -e "$ran" ] && [ "$(dialogs)" = 0 ] && [ "$(last_log 3)" = nopasswd-trusted ]
+check "trust: no dialog, logged nopasswd-trusted" 0 $?
+mkdir -p "$XDG_CONFIG_HOME/agent-sudo"; echo "nopasswd = trust" >"$XDG_CONFIG_HOME/agent-sudo/config"
+attempt FAKE_SUDO_NOPASSWD=1
+[ -e "$ran" ] && [ "$(dialogs)" = 0 ];                     check "config file sets nopasswd = trust" 0 $?
+rm "$XDG_CONFIG_HOME/agent-sudo/config"
+attempt AGENT_SUDO_NOPASSWD=maybe;                         check "unknown nopasswd setting" 64 $? 'unknown nopasswd'
+
+# Fail closed: a dialog that dies without recording an answer is not an approval.
+attempt FAKE_SUDO_NOPASSWD=1 FAKE_ZENITY_ANSWER=crash
+check "sudo: crashed review refuses" 77 $? 'review dialog failed'
+[ ! -e "$ran" ];                                           check "sudo: crashed review, nothing ran" 0 $?
+for b in pkexec run0; do
+  rm -f "$ran"; run env AGENT_SUDO_BACKEND=$b FAKE_ZENITY_ANSWER=crash agent-sudo --reason x -- touch "$ran"
+  check "$b: crashed review refuses" 77 $? 'review dialog failed'
+  [ ! -e "$ran" ];                                         check "$b: crashed review, nothing ran" 0 $?
+done
 
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

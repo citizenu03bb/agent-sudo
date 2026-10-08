@@ -43,12 +43,18 @@ Chosen by, in order: `AGENT_SUDO_BACKEND`, then `backend = ...` in `~/.config/ag
 
 | backend | how you approve |
 |---|---|
-| `sudo` | type your password in agent-sudo's dialog; it goes straight to `sudo -k -A` |
+| `sudo` | type your password in agent-sudo's dialog; sudo runs only after that, through `sudo -k -A` |
 | `pkexec` | approve in agent-sudo's review window, then type your password in the desktop's polkit prompt |
 | `run0` | same as pkexec, via systemd; polkit's remembered approval is revoked before and after each call |
 | `auto` | inside a `no_new_privs` sandbox: run0 if the system bus is reachable, otherwise refuse with a hint to re-run outside the sandbox. Else pkexec if a polkit agent is running, else sudo |
 
 `sudo -k` ignores any cached sudo login and saves none, so a terminal `sudo` never carries over to an agent.
+
+### NOPASSWD rules
+
+A `NOPASSWD` rule in your sudoers saves you the password, not the review: agent-sudo still shows its dialog, with Approve / Deny instead of a password field, and nothing runs until you approve. If sudo can't tell in advance whether a password is needed (with mixed rules, `sudo -l` itself may want one), the dialog asks for it anyway; it is never skipped.
+
+To let sudoers decide instead, set `nopasswd = trust` in `~/.config/agent-sudo/config` (or `AGENT_SUDO_NOPASSWD=trust`). Then a command matched by a `NOPASSWD` rule runs with no dialog and is only logged, as `nopasswd-trusted`. A broad rule such as `NOPASSWD: ALL` turns the `sudo` backend into a log, so use `trust` only with narrow rules you'd approve every time anyway.
 
 Requests over 15 lines or 1500 characters open a scrollable review window first. Piped or heredoc stdin is captured and shown, and must end within 10 seconds; binary stdin is shown as size and hash only.
 
@@ -67,7 +73,7 @@ Every request is logged to `~/.local/state/agent-sudo/log.tsv`: time, agent, out
 
 agent-sudo is a consent and visibility layer for agents that follow their instructions. It is not a boundary against an agent that is actively hostile, for example one hijacked by prompt injection. Such an agent can skip agent-sudo and use any cached sudo login, show its own fake password dialog, or edit your shell startup files. Keep sudo timestamps per-terminal (`timestamp_type=tty`), and with pkexec or run0 only type your password into the desktop's own prompt.
 
-The reason line is written by the agent and labelled as unverified. Commands that run files the agent can edit (`make install`, `./setup.sh`) execute agent-written code even when the command itself looks harmless.
+With the sudo backend, the password you type in agent-sudo's dialog is handed to sudo through a private named pipe (mode 600, never written to disk) once you approve; it is never visible to the agent, but like the dialog itself it is reachable by other processes running as you. The reason line is written by the agent and labelled as unverified. Commands that run files the agent can edit (`make install`, `./setup.sh`) execute agent-written code even when the command itself looks harmless.
 
 Root doesn't only come through sudo. On a desktop, plain `systemctl restart`, `pkcon install`, `snap install`, `nmcli` and similar commands escalate through polkit, and the desktop's password prompt then can't say which agent asked. The skill tells agents to route these through agent-sudo too.
 
@@ -85,7 +91,7 @@ Skills load on demand. In benchmarks, Pi and Antigravity read the skill before a
 tests/run.sh
 ```
 
-A fake zenity answers every dialog with Deny, so the tests never run anything as root or show a real prompt. They use throwaway XDG directories and leave your log and config alone.
+Fake `zenity`, `sudo`, `pkexec`, `run0` and `pkcheck` (`tests/fakebin`) stand in for the real ones, so the tests never run anything as root or show a real prompt, and cover approvals, NOPASSWD rules and crashed dialogs as well as denials. They use throwaway XDG directories and leave your log and config alone.
 
 ### Dry-run mode
 

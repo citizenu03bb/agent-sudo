@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stand-in for run0 in tests: runs the command as the caller, never escalates.
+while [ $# -gt 0 ]; do case $1 in --) shift; break ;; *) shift ;; esac; done
+exec "$@"

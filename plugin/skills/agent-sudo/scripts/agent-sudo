@@ -4,8 +4,11 @@
 #
 # Backends (AGENT_SUDO_BACKEND, else `backend =` in agent-sudo/config under
 # $XDG_CONFIG_HOME then $XDG_CONFIG_DIRS, else auto):
-#   sudo    zenity password dialog -> sudo -A. `-k` ignores any cached login
+#   sudo    zenity review (with the password, when sudo will want one) before
+#           sudo runs, then sudo -A fed from it. `-k` ignores any cached login
 #           (timestamp_type=global would let agents piggyback) and saves none.
+#           A NOPASSWD rule skips the password, not the review (nopasswd = trust
+#           restores "sudoers decides").
 #   pkexec  zenity review, then the desktop's polkit prompt (auth_admin, no keep).
 #   run0    zenity review, then polkit via systemd; not setuid, so it can work
 #           under no_new_privs. Its polkit action defaults to auth_admin_keep,
@@ -27,6 +30,9 @@ Dry run: AGENT_SUDO_DRY_RUN=FILE records each request as a JSON line and
          without a dialog; nothing is executed.
 Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
          ~/.config/agent-sudo/config (then /etc/xdg/agent-sudo/config).
+NOPASSWD: AGENT_SUDO_NOPASSWD=review|trust, or `nopasswd = ...` there. review
+         (default) shows the dialog even when sudoers needs no password; trust
+         lets sudoers decide, so such commands run with no dialog, only logged.
 Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
             otherwise the command's own exit code.
 Log: ~/.local/state/agent-sudo/log.tsv
@@ -96,16 +102,16 @@ log() {
     "$PWD" "${reason//$'\t'/ }" "${one_line//$'\t'/ }" "$backend" 2>/dev/null >>"$state_dir/log.tsv"
 }
 
-config_backend() {
+config_get() {  # $1 = key, $2 = default
   local d f v dirs
   IFS=: read -ra dirs <<<"${XDG_CONFIG_HOME:-$HOME/.config}:${XDG_CONFIG_DIRS:-/etc/xdg}"
   for d in "${dirs[@]}"; do
     f=$d/agent-sudo/config
     [ -r "$f" ] || continue
-    v=$(sed -nE 's/^[[:space:]]*backend[[:space:]]*=[[:space:]]*([a-z0-9]+).*/\1/p' "$f" | tail -n1)
+    v=$(sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([a-z0-9]+).*/\\1/p" "$f" | tail -n1)
     [ -n "$v" ] && { echo "$v"; return; }
   done
-  echo auto
+  echo "$2"
 }
 
 # Polkit has no public "is an agent registered" call; look for known agents.
@@ -135,7 +141,11 @@ if [ -z "${WAYLAND_DISPLAY-}${DISPLAY-}" ]; then
   die "no graphical session to show the approval dialog; give $human the command to run" $EX_NODISPLAY
 fi
 
-want=${AGENT_SUDO_BACKEND:-$(config_backend)}
+want=${AGENT_SUDO_BACKEND:-$(config_get backend auto)}
+# NOPASSWD rules: `review` (default) still shows agent-sudo's dialog; `trust` lets
+# sudoers decide, so a matching command runs with no dialog (logged only).
+nopasswd=${AGENT_SUDO_NOPASSWD:-$(config_get nopasswd review)}
+case $nopasswd in review|trust) ;; *) die "unknown nopasswd setting '$nopasswd' (review, trust)" ;; esac
 case $want in
   sudo|pkexec|run0) backend=$want ;;
   auto)
@@ -169,7 +179,7 @@ for d in "${XDG_RUNTIME_DIR-}" /tmp /dev/shm; do
   [ -n "$d" ] && tmp=$(mktemp -d "$d/agent-sudo.XXXXXX" 2>/dev/null) && break
 done
 [ -n "$tmp" ] || die "no writable temp directory" 70
-trap 'rm -rf "$tmp"' EXIT
+trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$tmp"' EXIT   # jobs: a password FIFO writer
 status=$tmp/status review=$tmp/review stdin_file=''
 : >"$status"
 
@@ -243,15 +253,67 @@ run_polkit() {
   wait "$tee_pid"
 }
 
-run_sudo() {
-  AGENT_SUDO_MODE=askpass SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
-  rc=$?
+# Fail closed: run only if the dialog itself succeeded AND recorded an approval.
+# A crashed or killed dialog leaves no record and must not count as a yes.
+require_approval() {  # $1 = the dialog's exit code
   case $(tail -n1 "$status") in
-    denied)   denied denied "denied by $human" ;;
-    timeout)  denied timeout "timed out with no answer" ;;
-    approved) log approved "$rc" ;;
-    '')       log no-prompt "$rc" ;;   # NOPASSWD rule matched, or sudo refused before asking
+    denied)  denied denied "denied by $human" ;;
+    timeout) denied timeout "timed out with no answer" ;;
+    approved) [ "$1" -eq 0 ] && return ;;
   esac
+  rc=$1
+  denied review-failed "not approved: the review dialog failed (exit $1), so nothing was run"
+}
+
+run_sudo() {
+  if [ "$nopasswd" = trust ]; then
+    # sudoers decides: the password prompt is the review, so a NOPASSWD match runs
+    # with no dialog at all and is only logged.
+    AGENT_SUDO_MODE=askpass SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
+    rc=$?
+    case $(tail -n1 "$status") in
+      denied)   denied denied "denied by $human" ;;
+      timeout)  denied timeout "timed out with no answer" ;;
+      approved) log approved "$rc" ;;
+      *)        log nopasswd-trusted "$rc" ;;
+    esac
+    exit $rc
+  fi
+
+  # Review first, always: a NOPASSWD rule saves the password, not the approval.
+  # `sudo -n -l` only picks which dialog to show. It can be wrong (sudoers'
+  # default listpw=any wants a password for -l unless every rule is NOPASSWD),
+  # and that must never let a command run unreviewed, so the review happens
+  # before sudo whatever it says; at worst it asks for a password not needed.
+  local nopw=0 pw='' gate writer=''
+  sudo -k -n -l -- "$@" >/dev/null 2>&1 </dev/null && nopw=1
+  if [ $nopw = 1 ]; then
+    AGENT_SUDO_MODE=review AGENT_SUDO_HINT="Your sudoers lets this run without a password; approving runs it." \
+      "$dialog" </dev/null
+    gate=$?
+  else
+    pw=$(AGENT_SUDO_MODE=collect "$dialog" </dev/null)
+    gate=$?
+  fi
+  require_approval $gate
+
+  # Hand the password to sudo only if it asks, through a private FIFO (never on disk).
+  local fifo=''
+  if [ -n "$pw" ]; then
+    fifo=$tmp/pw
+    mkfifo -m 600 "$fifo" || denied review-failed "could not pass the password to sudo"
+    { printf '%s\n' "$pw" >"$fifo"; } 2>/dev/null &
+    writer=$!
+    pw=''
+  fi
+  AGENT_SUDO_MODE=feed AGENT_SUDO_PWFIFO=$fifo SUDO_ASKPASS=$dialog sudo -k -A -- "$@"
+  rc=$?
+  [ -z "$writer" ] || { kill "$writer" 2>/dev/null; wait "$writer" 2>/dev/null; }
+  case $(tail -n1 "$status") in
+    denied)  denied denied "cancelled at the password prompt" ;;
+    timeout) denied timeout "timed out at the password prompt" ;;
+  esac
+  if [ $nopw = 1 ]; then log approved-nopasswd "$rc"; else log approved "$rc"; fi
   exit $rc
 }
 
@@ -259,10 +321,7 @@ run_sudo() {
 
 # pkexec / run0: our review first, then the system prompt for the password.
 AGENT_SUDO_MODE=review "$dialog" </dev/null
-case $(tail -n1 "$status") in
-  denied)  denied denied "denied by $human" ;;
-  timeout) denied timeout "timed out with no answer" ;;
-esac
+require_approval $?
 
 if [ "$backend" = pkexec ]; then
   run_polkit pkexec --disable-internal-agent --keep-cwd "$@"

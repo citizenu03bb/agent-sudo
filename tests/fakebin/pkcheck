@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stand-in for pkcheck in tests.
+exit 0
