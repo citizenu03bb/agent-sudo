@@ -7,28 +7,30 @@
 3. Bump `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (keep them equal).
 4. Commit, then tag and push:
    ```bash
-   git tag -a v0.2.0 -m "agent-sudo 0.2.0"
+   git tag -a v0.2.1 -m "agent-sudo 0.2.1"
    git push origin main --tags
    ```
-5. Optional: `gh release create v0.2.0 --generate-notes`.
+5. Optional: `gh release create v0.2.1 --generate-notes`.
 
 The skill lives in one place, `skills/agent-sudo/`, and every channel installs from it: `npx skills add`, the Claude Code plugin, and `install.sh`.
 
 ## skills.sh
 
-Discovery is automatic from the GitHub repo once it has been submitted: the skill sits in `skills/agent-sudo/` (SKILL.md plus `scripts/`). Check the install before submitting:
+There is no submission step. skills.sh lists a skill automatically, from the skills CLI's anonymous install telemetry, once someone installs it:
 
 ```bash
 npx skills add citizenu03bb/agent-sudo
 ```
 
-Then submit the repository URL on skills.sh.
+The skill sits in `skills/agent-sudo/` (SKILL.md plus `scripts/`), which is where the CLI looks. `npx skills update` pulls new versions for existing users.
 
-**Short description:** Root for coding agents with a human in the loop: every sudo or polkit request opens a desktop dialog showing the agent, the exact command and its reason.
+**Short description (for the README and listing page):** Root for coding agents with a human in the loop: every sudo or polkit request opens a desktop dialog showing the agent, the exact command and its reason.
 
 ## Claude plugin directory
 
-External plugins are submitted through Anthropic's form (https://clau.de/plugin-directory-submission), not by pull request. Suggested answers:
+Submit from a claude.ai account (Pro, Max, Team or Enterprise) in the developer portal at https://claude.ai/directory/manage: **Submit new** → **Plugin bundle** → enter the repository (plugin folder = repository root) → **Validate** → fix anything marked Blocking → submit. The first organization to submit a repository folder owns that listing. The portal then scans each new commit on the branch or tag it follows, so raise `version` with every release. Checklist: https://claude.com/docs/plugins/pre-submission-checklist
+
+Expect a "Held for a reviewer" result rather than instant listing: the plugin's scripts call sudo, pkexec and run0. Suggested answers for the form:
 
 - **Name:** agent-sudo
 - **Repository:** https://github.com/citizenu03bb/agent-sudo
