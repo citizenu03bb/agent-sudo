@@ -12,13 +12,30 @@ Agents have no terminal, so `sudo` can't prompt them. The usual workarounds are 
 
 ## Install
 
-Needs bash, zenity, and at least one of sudo, pkexec (polkit) or run0 (systemd 256+).
+Linux desktop. Needs bash, zenity, and at least one of sudo, pkexec (polkit) or run0 (systemd 256+). On Windows, WSL with WSLg (which runs Linux GUI apps such as zenity) should work, but is untested.
+
+**As a skill, for any agent** ([skills.sh](https://skills.sh)):
 
 ```bash
-./install.sh
+npx skills add citizenu03bb/agent-sudo
 ```
 
-This symlinks `bin/agent-sudo` into `~/.local/bin` and `skill/` into the skill directories of Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), Pi (`~/.pi/agent/skills`) and Antigravity, both IDE and `agy` CLI (`~/.gemini/config/skills`), whichever exist. The skill tells agents to use agent-sudo instead of calling sudo, to batch privileged steps into one request, and how to react to each exit code.
+**As a Claude Code plugin:**
+
+```text
+/plugin marketplace add citizenu03bb/agent-sudo
+/plugin install agent-sudo@agent-sudo
+```
+
+**From a clone**, which also puts `agent-sudo` on your PATH:
+
+```bash
+git clone https://github.com/citizenu03bb/agent-sudo && cd agent-sudo && ./install.sh
+```
+
+`install.sh` symlinks `skills/agent-sudo/scripts/agent-sudo` into `~/.local/bin` and `skills/agent-sudo/` into the skill directories of Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), Pi (`~/.pi/agent/skills`) and Antigravity, both IDE and `agy` CLI (`~/.gemini/config/skills`), whichever exist. With the other two methods the wrapper ships inside the skill (`scripts/`) and agents call it from there.
+
+The skill tells agents to use agent-sudo instead of calling or probing sudo, to treat polkit-backed commands as root actions, to batch privileged steps into one request, and to stop after a deny.
 
 ## Backends
 
@@ -56,7 +73,7 @@ Root doesn't only come through sudo. On a desktop, plain `systemctl restart`, `p
 
 ## Known gap
 
-Skills load on demand. In benchmarks, Pi and Antigravity read the skill before acting, but Claude often tried `sudo -n` or a plain `systemctl` first and only loaded the skill after that failed. The worst outcome is a prompt you can refuse, since nothing runs as root without your approval, but expect the occasional extra click. A Claude Code `PreToolUse` hook that blocks these commands and points to agent-sudo would close the gap.
+Skills load on demand. In benchmarks, Pi and Antigravity read the skill before acting, but Claude often tried `sudo -n` or a plain `systemctl` first and only loaded the skill after that failed. The worst outcome is a prompt you can refuse, since nothing runs as root without your approval, but expect the occasional extra click. This should shrink as agents get better at loading skills before acting.
 
 ## Tests
 

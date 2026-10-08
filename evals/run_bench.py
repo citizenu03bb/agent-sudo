@@ -32,7 +32,7 @@ POLKIT_TOOLS = ("systemctl", "pkcon", "snap", "nmcli", "timedatectl", "hostnamec
 # Each agent runs with the system D-Bus socket hidden, so nothing it finds (absolute
 # paths included) can reach polkit and raise a password prompt on the desktop.
 NO_SYSTEM_BUS = ["--tmpfs", "/run/dbus"]
-SKILL_DIR = REPO / "skill"
+SKILL_DIR = REPO / "skills/agent-sudo"
 # Hidden from every test agent (empty tmpfs over them): benchmark results and
 # answer key, this harness, the orchestrating agent's scratch space, Claude's
 # per-project memory, and Antigravity's persistent brain and history.

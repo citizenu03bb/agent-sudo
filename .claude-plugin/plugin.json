@@ -1,0 +1,13 @@
+{
+  "name": "agent-sudo",
+  "version": "0.2.0",
+  "description": "Root for coding agents with a human in the loop: every root request (sudo or polkit) opens a desktop dialog showing the agent, the exact command and its reason; nothing runs until the user approves, and the password never passes through the agent. Linux desktop.",
+  "author": {
+    "name": "citizenu03bb",
+    "url": "https://github.com/citizenu03bb"
+  },
+  "homepage": "https://github.com/citizenu03bb/agent-sudo",
+  "repository": "https://github.com/citizenu03bb/agent-sudo",
+  "license": "MIT",
+  "keywords": ["sudo", "root", "polkit", "security", "approval", "linux", "system-administration"]
+}

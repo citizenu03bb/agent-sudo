@@ -1,0 +1,16 @@
+{
+  "name": "agent-sudo",
+  "description": "agent-sudo: approval dialog for root commands run by coding agents.",
+  "owner": {
+    "name": "citizenu03bb",
+    "url": "https://github.com/citizenu03bb"
+  },
+  "plugins": [
+    {
+      "name": "agent-sudo",
+      "source": "./",
+      "description": "Root for coding agents with a human in the loop: an approval dialog for every sudo or polkit request. Linux desktop.",
+      "version": "0.2.0"
+    }
+  ]
+}

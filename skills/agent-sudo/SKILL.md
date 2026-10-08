@@ -11,6 +11,8 @@ You have no terminal, so `sudo` can't ask you for a password, and any cached sud
 agent-sudo --reason "<one honest line: why this needs root>" -- <command> [args...]
 ```
 
+If `agent-sudo` isn't on your PATH, use the copy bundled with this skill: `scripts/agent-sudo` in this skill's directory (the folder containing this SKILL.md), called by its full path. It needs a desktop session (zenity, plus sudo, pkexec or run0) on Linux.
+
 The point is that the user sees and decides every root action, knowing which agent asked. Three habits defeat that, so check yourself against them before your first command:
 
 - **Don't probe for root.** `sudo -n true`, `sudo -l` or `sudo -n <cmd>` "just to see" either fail (no terminal) or silently use a login the user made elsewhere. Neither tells you anything useful: when a step needs root, go straight to `agent-sudo`.
@@ -40,7 +42,7 @@ The point is that the user sees and decides every root action, knowing which age
 | 64 | usage error (e.g. missing `--reason`) | Fix the call. |
 | other | the command's own exit code | Handle it normally. |
 
-Every request is logged to `~/.local/state/agent-sudo/log.tsv`.
+Every request is logged to `~/.local/state/agent-sudo/log.tsv`. The user can make `agent-sudo` available everywhere with the repository's `install.sh`; don't run it yourself unless they ask.
 
 ## Backends
 
