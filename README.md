@@ -1,6 +1,6 @@
 # agent-sudo
 
-Root for coding agents (Claude Code, Codex, Pi) with a human in the loop. Each request opens a desktop dialog showing which agent is asking, the exact command (including any heredoc or piped stdin), the agent's stated reason and the working directory. The command runs only after you approve, and your password never passes through the agent.
+Root for coding agents (Claude Code, Codex, Pi, Antigravity) with a human in the loop. Each request opens a desktop dialog showing which agent is asking, the exact command (including any heredoc or piped stdin), the agent's stated reason and the working directory. The command runs only after you approve, and your password never passes through the agent.
 
 ```bash
 agent-sudo --reason "install foo from the distro repo" -- sh -c 'apt-get update && apt-get install -y foo'
@@ -18,7 +18,7 @@ Needs bash, zenity, and at least one of sudo, pkexec (polkit) or run0 (systemd 2
 ./install.sh
 ```
 
-This symlinks `bin/agent-sudo` into `~/.local/bin` and `skill/` into the skill directories of Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`) and Pi (`~/.pi/agent/skills`), whichever exist. The skill tells agents to use agent-sudo instead of calling sudo, to batch privileged steps into one request, and how to react to each exit code.
+This symlinks `bin/agent-sudo` into `~/.local/bin` and `skill/` into the skill directories of Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), Pi (`~/.pi/agent/skills`) and Antigravity, both IDE and `agy` CLI (`~/.gemini/config/skills`), whichever exist. The skill tells agents to use agent-sudo instead of calling sudo, to batch privileged steps into one request, and how to react to each exit code.
 
 ## Backends
 
@@ -52,6 +52,12 @@ agent-sudo is a consent and visibility layer for agents that follow their instru
 
 The reason line is written by the agent and labelled as unverified. Commands that run files the agent can edit (`make install`, `./setup.sh`) execute agent-written code even when the command itself looks harmless.
 
+Root doesn't only come through sudo. On a desktop, plain `systemctl restart`, `pkcon install`, `snap install`, `nmcli` and similar commands escalate through polkit, and the desktop's password prompt then can't say which agent asked. The skill tells agents to route these through agent-sudo too.
+
+## Known gap
+
+Skills load on demand. In benchmarks, Pi and Antigravity read the skill before acting, but Claude often tried `sudo -n` or a plain `systemctl` first and only loaded the skill after that failed. The worst outcome is a prompt you can refuse, since nothing runs as root without your approval, but expect the occasional extra click. A Claude Code `PreToolUse` hook that blocks these commands and points to agent-sudo would close the gap.
+
 ## Tests
 
 ```bash
@@ -59,6 +65,21 @@ tests/run.sh
 ```
 
 A fake zenity answers every dialog with Deny, so the tests never run anything as root or show a real prompt. They use throwaway XDG directories and leave your log and config alone.
+
+### Dry-run mode
+
+`AGENT_SUDO_DRY_RUN=<file>` makes agent-sudo record each request (agent, reason, argv, stdin) as a JSON line and answer with `AGENT_SUDO_DRY_RUN_RC` (0 approve, 77 deny, 69 can't ask) without a dialog and without running anything. Useful for testing an agent integration.
+
+### Agent benchmark
+
+`evals/` holds a behaviour benchmark in the layout of the skill-creator skill: six tasks (`evals/evals.json`), run against Claude Code, Pi and the Antigravity CLI with and without the skill, or with two skill versions. Grading is automatic, from the recorded requests and transcripts.
+
+```bash
+python3 evals/run_bench.py --iteration 1 --work-root "$(mktemp -d)" [--agents claude,pi,agy] [--configs with_skill,without_skill]
+python3 evals/grade.py agent-sudo-workspace/iteration-1
+```
+
+Nothing runs as root. Each agent runs under `bwrap` with the system D-Bus hidden, so no polkit prompt can appear. A per-run tools directory first on PATH holds an agent-sudo shim in dry-run mode and recording stand-ins for sudo, pkexec, run0, docker and the other escalation routes. Results, the harness itself and agents' persistent memories are hidden from the agents under test. For the agy runs, the harness temporarily adds allow-rules to `~/.gemini/antigravity-cli/settings.json` and restores the file byte-for-byte afterwards. Benchmark runs use real model calls.
 
 ## License
 

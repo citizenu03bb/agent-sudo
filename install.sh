@@ -7,7 +7,11 @@ chmod +x "$here/bin/agent-sudo" "$here/libexec/agent-sudo-dialog"
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$here/bin/agent-sudo" "$HOME/.local/bin/agent-sudo"
 
-for d in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.pi/agent/skills"; do
+# Antigravity (GUI and agy CLI) share the global customization root ~/.gemini/config.
+[ -d "$HOME/.gemini/config" ] && mkdir -p "$HOME/.gemini/config/skills"
+
+for d in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.pi/agent/skills" \
+         "$HOME/.gemini/config/skills"; do
   [ -d "$d" ] || continue
   ln -sfn "$here/skill" "$d/agent-sudo"
   echo "skill -> $d/agent-sudo"

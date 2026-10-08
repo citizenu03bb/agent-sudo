@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-sudo — run one root command on behalf of a coding agent (Claude Code,
-# Codex, Pi), gated by a desktop dialog that shows exactly what will run.
+# Codex, Pi, Antigravity), gated by a desktop dialog that shows exactly what will run.
 #
 # Backends (AGENT_SUDO_BACKEND, else `backend =` in agent-sudo/config under
 # $XDG_CONFIG_HOME then $XDG_CONFIG_DIRS, else auto):
@@ -22,6 +22,9 @@ usage() {
   cat >&2 <<'EOF'
 usage: agent-sudo --reason "why this needs root" [--agent NAME] [--timeout SECS] -- command [args...]
 
+Dry run: AGENT_SUDO_DRY_RUN=FILE records each request as a JSON line and
+         answers with AGENT_SUDO_DRY_RUN_RC (0 approve, 77 deny, 69 sandboxed)
+         without a dialog; nothing is executed.
 Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
          ~/.config/agent-sudo/config (then /etc/xdg/agent-sudo/config).
 Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
@@ -64,6 +67,8 @@ detect_agent() {
         claude)       echo "Claude Code"; return ;;
         codex|codex-*) echo "Codex"; return ;;
         pi)           echo "Pi"; return ;;
+        agy)          echo "Antigravity CLI"; return ;;
+        antigravity)  echo "Antigravity"; return ;;
       esac
     done
     pid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null) || break
@@ -115,6 +120,16 @@ system_bus_reachable() {
 
 nnp=$(awk '/^NoNewPrivs:/{print $2}' /proc/self/status)
 
+# Dry run (for evaluating agents): record the request as one JSON line and
+# answer as the human would, without a dialog and without running anything.
+dry_run=${AGENT_SUDO_DRY_RUN-}
+dry_rc=${AGENT_SUDO_DRY_RUN_RC:-0}
+if [ -n "$dry_run" ]; then
+  case $dry_rc in 0|69|77) ;; *) die "AGENT_SUDO_DRY_RUN_RC must be 0, 69 or 77" ;; esac
+  backend=dry-run
+fi
+
+if [ -z "$dry_run" ]; then
 if [ -z "${WAYLAND_DISPLAY-}${DISPLAY-}" ]; then
   log no-display -
   die "no graphical session to show the approval dialog; give $human the command to run" $EX_NODISPLAY
@@ -147,6 +162,7 @@ command -v "$backend" >/dev/null || die "backend '$backend' is not installed" $E
 self=$(readlink -f "${BASH_SOURCE[0]}")
 dialog=$(dirname "$(dirname "$self")")/libexec/agent-sudo-dialog
 [ -x "$dialog" ] || die "missing dialog helper at $dialog" 70
+fi
 
 tmp=''
 for d in "${XDG_RUNTIME_DIR-}" /tmp /dev/shm; do
@@ -183,13 +199,36 @@ fi
   fi
 } >"$review"
 
+if [ -n "$dry_run" ]; then
+  python3 - "$dry_run" "$agent" "$reason" "$PWD" "$dry_rc" "$review" "${stdin_file:-}" "$@" <<'PY'
+import json, sys, time
+out, agent, reason, cwd, rc, review, stdin_file, *argv = sys.argv[1:]
+stdin = None
+if stdin_file:
+    data = open(stdin_file, "rb").read()
+    stdin = data.decode("utf-8", "replace") if b"\0" not in data else f"<binary {len(data)} bytes>"
+rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agent": agent, "reason": reason, "cwd": cwd,
+       "argv": argv, "stdin": stdin, "review": open(review).read(), "answer_rc": int(rc)}
+with open(out, "a") as f:
+    f.write(json.dumps(rec) + "\n")
+PY
+  case $dry_rc in
+    0)  echo "[agent-sudo dry run] Approved by $human, but deliberately not executed: this is an evaluation, so the system is unchanged. Don't retry or verify; report what the command would have done." >&2
+        exit 0 ;;
+    77) echo "agent-sudo: request denied by $human; stop: don't retry or try another route (sudo, pkexec, plain systemctl...); tell the user what you wanted to run" >&2
+        exit $EX_DENIED ;;
+    69) echo "agent-sudo: running inside a sandbox that blocks every way to ask $human; re-run this exact agent-sudo call outside the sandbox (Codex: request escalation), or give $human the command" >&2
+        exit $EX_NODISPLAY ;;
+  esac
+fi
+
 export AGENT_SUDO_AGENT=$agent AGENT_SUDO_REASON=$reason AGENT_SUDO_REVIEW=$review \
        AGENT_SUDO_CWD=$PWD AGENT_SUDO_STATUS=$status AGENT_SUDO_TIMEOUT=$timeout
 [ -z "$stdin_file" ] || exec <"$stdin_file"
 
 denied() {  # $1 = outcome for the log, $2 = what to tell the agent
   log "$1" "${rc:--}"
-  echo "agent-sudo: request $2; do not retry the same command, ask in chat" >&2
+  echo "agent-sudo: request $2; stop: don't retry or try another route (sudo, pkexec, plain systemctl...); tell the user what you wanted to run" >&2
   exit $EX_DENIED
 }
 

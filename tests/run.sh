@@ -61,12 +61,21 @@ check "endless stdin refused" 64 $? 'did not end within 10s'
 run setpriv --no-new-privs env AGENT_SUDO_BACKEND=sudo agent-sudo --reason nnp -- id -u
 check "no_new_privs blocks setuid backend" 69 $? 'no_new_privs'
 
-for agent in codex pi; do
+for agent in codex pi agy antigravity; do
   printf '#!/usr/bin/env bash\n"$@"\n' >"$work/$agent"; chmod +x "$work/$agent"
   run "$work/$agent" bash -c 'AGENT_SUDO_BACKEND=sudo agent-sudo --reason detect -- id -u'
-  case $agent in codex) want=Codex ;; pi) want=Pi ;; esac
+  case $agent in codex) want=Codex ;; pi) want=Pi ;; agy) want="Antigravity CLI" ;; antigravity) want=Antigravity ;; esac
   [ "$(last_log 2)" = "$want" ]; check "detects $want as caller" 0 $?
 done
+
+run env -u WAYLAND_DISPLAY AGENT_SUDO_DRY_RUN="$work/dry.jsonl" agent-sudo --reason "dry" -- tee /etc/x <<'EOF'
+k = v
+EOF
+check "dry run: approve, no dialog" 0 $? 'not executed'
+grep -q '"stdin": "k = v' "$work/dry.jsonl";               check "dry run records stdin" 0 $?
+run env AGENT_SUDO_DRY_RUN="$work/dry.jsonl" AGENT_SUDO_DRY_RUN_RC=77 agent-sudo --reason dry -- id -u
+check "dry run: scripted deny" 77 $? 'denied by'
+[ ! -s "$FAKE_ZENITY_OUT" ];                               check "dry run never opens a dialog" 0 $?
 
 grep -q . "$work/state/agent-sudo/log.tsv" && ! grep -q approved "$work/state/agent-sudo/log.tsv"
 check "nothing was ever approved" 0 $?

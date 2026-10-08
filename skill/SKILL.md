@@ -1,6 +1,6 @@
 ---
 name: agent-sudo
-description: Run a command that needs root on the user's machine. Use whenever a task needs sudo or root (installing system packages, editing /etc, system-level systemctl, mount/umount, modprobe/DKMS, writing under /usr or /opt, disk tools) instead of calling sudo yourself. Opens a desktop dialog that shows the user the exact command and your reason; the user approves by typing the password, which never passes through you.
+description: Run a command that needs root on the user's machine. Use whenever a task needs sudo or root (installing system packages, editing /etc, mount/umount, modprobe/DKMS, writing under /usr or /opt, disk tools) and also for system changes that go through polkit without sudo (systemctl start/stop/restart/enable on system units, pkcon, snap install, nmcli, timedatectl/hostnamectl set-*). Use it instead of calling or probing sudo yourself, even just `sudo -n`. Opens a desktop dialog that shows the user the exact command and your reason; the user approves by typing the password, which never passes through you.
 ---
 
 # agent-sudo
@@ -11,9 +11,15 @@ You have no terminal, so `sudo` can't ask you for a password, and any cached sud
 agent-sudo --reason "<one honest line: why this needs root>" -- <command> [args...]
 ```
 
+The point is that the user sees and decides every root action, knowing which agent asked. Three habits defeat that, so check yourself against them before your first command:
+
+- **Don't probe for root.** `sudo -n true`, `sudo -l` or `sudo -n <cmd>` "just to see" either fail (no terminal) or silently use a login the user made elsewhere. Neither tells you anything useful: when a step needs root, go straight to `agent-sudo`.
+- **polkit commands are root commands.** `systemctl restart|start|stop|enable` on a system unit, `pkcon install`, `snap install`, `nmcli` changes, `timedatectl`/`hostnamectl set-*` work without sudo by making the desktop pop a password prompt that names no agent. Run them through `agent-sudo` like anything else: `agent-sudo --reason "restart the stuck print spooler" -- systemctl restart cups`.
+- **No means stop.** If `agent-sudo` exits 77 (denied) or 69 (can't ask from here), don't try to reach the same result another way: not `sudo`, `pkexec`, `run0`, a plain `systemctl`, `docker` or a different package manager. Tell the user what you wanted to run and let them decide.
+
 ## Rules
 
-1. **Never call `sudo` directly.** No `sudo -n` to probe for a cached login, no `sudo -S`, never echo, pipe or ask for a password in chat.
+1. **Never call `sudo` (or `pkexec`, `run0`, `su`) directly.** No `sudo -S`, never echo, pipe or ask for a password in chat.
 2. **One dialog per call, so batch.** Put a privileged sequence in one call and show the script inline, so the user sees all of it in the dialog:
    `agent-sudo --reason "install foo from the distro repo" -- sh -c 'apt-get update && apt-get install -y foo'`
    Keep unprivileged steps (downloads, builds, reads) outside the call.
@@ -29,8 +35,8 @@ agent-sudo --reason "<one honest line: why this needs root>" -- <command> [args.
 
 | code | meaning | what to do |
 |---|---|---|
-| 77 | the user clicked Deny, or the dialog timed out | Don't retry the same command. Ask in chat what they want. |
-| 69 | no way to ask the user from here (no graphical session, or inside a sandbox) | Inside a sandbox: re-run the same call outside it. Otherwise give the user the command to run themselves (in Claude Code, the `!` prefix runs it in-session). |
+| 77 | the user clicked Deny, or the dialog timed out | Stop. Don't retry, and don't reach the same result by another route. Say what you wanted to run and ask what they want. |
+| 69 | no way to ask the user from here (no graphical session, or inside a sandbox) | If your harness can run this one call outside its sandbox (e.g. Codex escalation), re-run the same `agent-sudo` call there. Otherwise stop and give the user the exact command to run themselves (in Claude Code, the `!` prefix runs it in-session). Don't try other routes. |
 | 64 | usage error (e.g. missing `--reason`) | Fix the call. |
 | other | the command's own exit code | Handle it normally. |
 
@@ -45,3 +51,4 @@ The user picks the backend; you don't. `AGENT_SUDO_BACKEND` or `~/.config/agent-
 - **Codex:** agent-sudo cannot work inside the Codex sandbox (read-only filesystem, no system D-Bus, no setuid). Always request escalation (run outside the sandbox) for the `agent-sudo` call, with the same reason as the justification. If escalation isn't available in this session, you'll get exit 69: tell the user and give them the command.
 - **Claude Code:** if the Bash sandbox is on, run the `agent-sudo` call with the sandbox disabled.
 - **Pi:** runs unsandboxed; just call it.
+- **Antigravity (IDE and `agy` CLI):** runs commands unsandboxed by default; just call it. If the session was started with `--sandbox` and you get exit 69, tell the user and give them the command.
