@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Dialogs for agent-sudo. Two modes (AGENT_SUDO_MODE):
+#   askpass  SUDO_ASKPASS for the sudo backend: show who / what / why and read
+#            the password, printed on stdout for sudo.
+#   review   for the pkexec and run0 backends: show who / what / why with
+#            Approve / Deny only; the system's polkit prompt asks the password.
+# Records each outcome in $AGENT_SUDO_STATUS. Long requests (big scripts,
+# heredoc stdin) are shown in a scrollable review window.
+
+set -u
+[ -n "${AGENT_SUDO_STATUS-}" ] && [ -r "${AGENT_SUDO_REVIEW-}" ] \
+  || { echo "agent-sudo-dialog: only agent-sudo may call this" >&2; exit 1; }
+
+INLINE_MAX_LINES=15 INLINE_MAX_CHARS=1500
+mode=${AGENT_SUDO_MODE:-askpass}
+timeout=${AGENT_SUDO_TIMEOUT:-180}
+
+record() { echo "$1" >>"$AGENT_SUDO_STATUS"; }
+deny_from() { [ "$1" -eq 5 ] && record timeout || record denied; exit 1; }
+
+attempts=$(grep -c . "$AGENT_SUDO_STATUS")
+lines=$(wc -l <"$AGENT_SUDO_REVIEW")
+chars=$(wc -c <"$AGENT_SUDO_REVIEW")
+inline=0
+[ "$lines" -le $INLINE_MAX_LINES ] && [ "$chars" -le $INLINE_MAX_CHARS ] && inline=1
+
+context="Why (agent's words, unverified):
+        ${AGENT_SUDO_REASON}
+
+Where:  ${AGENT_SUDO_CWD}"
+
+# The long form: everything in one scrollable page.
+review_window() {  # $1 = ok label
+  local page
+  page=$(dirname "$AGENT_SUDO_STATUS")/page
+  {
+    printf '%s wants to run this as root.\n\n%s\n\n' "$AGENT_SUDO_AGENT" "$context"
+    printf '%.0s─' {1..72}; echo
+    cat "$AGENT_SUDO_REVIEW"
+  } >"$page"
+  zenity --text-info --filename="$page" --font="monospace 10" \
+    --title="agent-sudo: review root request (${lines} lines)" --width=900 --height=700 \
+    --ok-label="$1" --cancel-label=Deny --timeout="$timeout" 2>/dev/null
+}
+
+# zenity --entry renders --text literally (no Pango markup), so keep it plain.
+if [ $inline -eq 1 ]; then
+  what="${AGENT_SUDO_AGENT} wants to run as root:
+
+$(sed 's/^/    /' "$AGENT_SUDO_REVIEW")"
+else
+  what="${AGENT_SUDO_AGENT} wants to run as root the ${lines}-line request
+shown in the review window."
+fi
+
+if [ "$mode" = review ]; then
+  if [ $inline -eq 1 ]; then
+    zenity --question --no-markup --title="agent-sudo: root request" --width=680 \
+      --text="${what}
+
+${context}
+
+
+Approve, then confirm with your password in the system prompt." \
+      --ok-label=Approve --cancel-label=Deny --timeout="$timeout" 2>/dev/null
+  else
+    review_window "Approve"
+  fi
+  rc=$?
+  [ $rc -eq 0 ] && { record approved; exit 0; }
+  deny_from $rc
+fi
+
+# askpass mode
+if [ $inline -eq 0 ] && [ "$attempts" -eq 0 ]; then
+  review_window "Continue to approval" || deny_from $?
+fi
+
+retry=''
+[ "$attempts" -gt 0 ] && retry=$'WRONG PASSWORD, try again.\n\n'
+
+pw=$(zenity --entry --hide-text \
+  --title="agent-sudo: root request" --width=680 \
+  --text="${retry}${what}
+
+${context}
+
+
+Type your password to approve this one command." \
+  --ok-label=Approve --cancel-label=Deny \
+  --timeout="$timeout" 2>/dev/null)
+rc=$?
+
+if [ $rc -eq 0 ] && [ -n "$pw" ]; then
+  record approved
+  printf '%s\n' "$pw"
+  exit 0
+fi
+deny_from $rc

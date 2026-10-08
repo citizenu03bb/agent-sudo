@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Stand-in for zenity in tests. Records what would be shown in $FAKE_ZENITY_OUT.
+# It never approves: password and review dialogs always answer Deny. The only
+# "continue" is the long-request review window in askpass mode, which is
+# followed by the (denied) password dialog.
+
+{
+  for a in "$@"; do
+    case $a in
+      --entry|--question|--text-info) echo "=== $a" ;;
+      --title=*) echo "[title] ${a#--title=}" ;;
+      --text=*) echo "${a#--text=}" ;;
+      --filename=*) cat "${a#--filename=}" ;;
+    esac
+  done
+} >>"${FAKE_ZENITY_OUT:-/dev/null}"
+
+if [ "${AGENT_SUDO_MODE-}" = askpass ]; then
+  case " $* " in *" --text-info "*) exit 0 ;; esac
+fi
+exit 1
