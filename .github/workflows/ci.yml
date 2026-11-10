@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -36,6 +38,8 @@ jobs:
           bash -n plugin/skills/agent-sudo/scripts/agent-sudo-dialog
           bash -n tests/run.sh
           for script in tests/fakebin/*; do bash -n "$script"; done
+      - name: Release metadata
+        run: python3 tests/release-metadata.py
       - name: Installer checks (temporary destinations)
         run: python3 tests/install.py
       - name: Functional tests (simulated backends, no root commands)
