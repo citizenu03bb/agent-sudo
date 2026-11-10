@@ -10,12 +10,14 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(dirname "$here")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Keep inline-dialog fixtures independent of the checkout path length in CI.
+cd "$work" || exit 1
 
 export PATH="$here/fakebin:$root/plugin/skills/agent-sudo/scripts:$PATH"
 export XDG_STATE_HOME=$work/state XDG_CONFIG_HOME=$work/config XDG_CONFIG_DIRS=$work/etc-xdg
 export FAKE_ZENITY_OUT=$work/dialogs
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-test}
-unset AGENT_SUDO_BACKEND CLAUDECODE
+unset AGENT_SUDO_BACKEND AGENT_SUDO_CONFIRM CLAUDECODE
 
 pass=0 fail=0
 check() {  # name, expected rc, actual rc, [grep pattern that must be in dialogs+stderr]
@@ -118,13 +120,56 @@ attempt FAKE_SUDO_CACHED=1
 rm "$XDG_CONFIG_HOME/agent-sudo/config"
 attempt AGENT_SUDO_CONFIRM=maybe;                          check "unknown confirm setting" 64 $? 'unknown confirm'
 
-# polkit backends: polkit authenticates and keeps its own memory; nothing revokes it.
+# Polkit must review before any backend call, for both confirmation settings.
 for b in pkexec run0; do
-  rm -f "$ran" "$work/pk"; run env AGENT_SUDO_BACKEND=$b FAKE_PKCHECK_CALLS="$work/pk" agent-sudo --reason x -- touch "$ran"
-  check "$b: polkit decides, no dialog of ours" 0 $?
-  [ -e "$ran" ] && [ "$(dialogs)" = 0 ] && [ "$(last_log 3)" = polkit ] && [ ! -s "$work/pk" ]
-  check "$b: ran, logged polkit, no pkcheck revoke" 0 $?
+  for confirm_mode in auth always; do
+    for answer in deny timeout crash; do
+      rm -f "$ran" "$work/backend-calls"
+      run env AGENT_SUDO_BACKEND=$b AGENT_SUDO_CONFIRM=$confirm_mode FAKE_ZENITY_ANSWER=$answer \
+        FAKE_POLKIT_CALLS="$work/backend-calls" agent-sudo --reason x -- touch "$ran"
+      check "$b/$confirm_mode: $answer refuses" 77 $?
+      [ ! -e "$ran" ] && [ ! -e "$work/backend-calls" ]
+      check "$b/$confirm_mode: $answer never calls backend" 0 $?
+    done
+    rm -f "$ran" "$work/pk" "$work/backend-calls"
+    run env AGENT_SUDO_BACKEND=$b AGENT_SUDO_CONFIRM=$confirm_mode FAKE_ZENITY_ANSWER=approve \
+      FAKE_PKCHECK_CALLS="$work/pk" FAKE_POLKIT_CALLS="$work/backend-calls" \
+      agent-sudo --reason 'preserve stdin' -- tee "$ran" <<'EOF'
+reviewed stdin content
+EOF
+    check "$b/$confirm_mode: approved" 0 $? 'reviewed stdin content'
+    [ "$(cat "$ran")" = 'reviewed stdin content' ] && [ "$(dialogs)" = 1 ] \
+      && [ "$(last_log 3)" = approved ] && [ ! -s "$work/pk" ] \
+      && [ "$(wc -l <"$work/backend-calls")" = 1 ]
+    check "$b/$confirm_mode: one review, exact stdin, one backend call" 0 $?
+  done
 done
+
+# Deterministic auto selection of pkexec; only this test PATH contains pgrep.
+mkdir -p "$work/auto-bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$work/auto-bin/pgrep"
+chmod +x "$work/auto-bin/pgrep"
+for confirm_mode in auth always; do
+  for cached in 0 1; do
+    rm -f "$ran"
+    run env PATH="$work/auto-bin:$PATH" FAKE_ID_GROUPS=users AGENT_SUDO_CONFIRM=$confirm_mode \
+      FAKE_PKEXEC_ERROR=missing FAKE_ZENITY_ANSWER=approve FAKE_SUDO_CACHED=$cached \
+      agent-sudo --reason fallback -- tee "$ran" <<'EOF'
+fallback stdin content
+EOF
+    check "fallback/$confirm_mode/cached=$cached: success" 0 $?
+    [ "$(cat "$ran")" = 'fallback stdin content' ] && [ "$(dialogs)" = "$((2 - cached))" ] \
+      && [ "$(last_log 3)" = approved ] && [ "$(last_log 8)" = sudo ]
+    check "fallback/$confirm_mode/cached=$cached: review reused, stdin preserved" 0 $?
+  done
+done
+rm -f "$ran" "$work/sudo-calls"
+run env PATH="$work/auto-bin:$PATH" FAKE_ID_GROUPS=users FAKE_PKEXEC_ERROR=denied \
+  FAKE_ZENITY_ANSWER=approve FAKE_SUDO_CALLS="$work/sudo-calls" \
+  agent-sudo --reason denied -- touch "$ran"
+check "polkit auth denial refuses" 77 $?
+[ ! -e "$ran" ] && [ ! -e "$work/sudo-calls" ]
+check "polkit auth denial never falls back to sudo" 0 $?
 
 # auto: members of the sudo group get sudo, whatever polkit agent is around.
 rm -f "$ran"; run env FAKE_ID_GROUPS="someone sudo" FAKE_SUDO_CACHED=1 agent-sudo --reason x -- touch "$ran"

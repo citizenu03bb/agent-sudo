@@ -1,6 +1,6 @@
 # agent-sudo
 
-Root for coding agents (Claude Code, Codex, Pi, Antigravity) without a terminal. When a root command needs your password, a desktop prompt shows which agent is asking, the exact command (including any heredoc or piped stdin), the agent's stated reason and the working directory. While your login is still fresh, requests run without interrupting you, and every one is logged. Your password goes from the prompt to sudo or polkit, never through the agent.
+Root for coding agents (Claude Code, Codex, Pi, Antigravity) without a terminal. When a root command needs your password, a desktop prompt shows which agent is asking, the exact command (including any heredoc or piped stdin), the agent's stated reason and the working directory. With sudo and the default settings, requests run without interrupting you while your login is still fresh. With pkexec or run0, a separate Approve / Deny review always comes first, followed by system authentication if needed. Every request is logged. Your password goes from the prompt to sudo or polkit, never through the agent.
 
 ```bash
 agent-sudo --reason "install foo from the distro repo" -- sh -c 'apt-get update && apt-get install -y foo'
@@ -45,10 +45,10 @@ Set with `AGENT_SUDO_CONFIRM` or `confirm = ...` in `~/.config/agent-sudo/config
 
 | `confirm` | what you see |
 |---|---|
-| `auth` (default) | Nothing while your login is fresh. When the backend needs your password, one prompt with the whole request. |
+| `auth` (default) | With sudo: no prompt while your login is fresh; otherwise the password dialog includes the request (large requests open a separate review first). With pkexec/run0: always review first, then system authentication if needed. |
 | `always` | An Approve / Deny dialog before every command, then the backend's password prompt if it still needs one. |
 
-Under `auth`, a fresh login means agents run root commands without asking, for as long as the backend remembers it, and a `NOPASSWD` rule in your sudoers means no prompt at all for the commands it covers. That is the point of the default, so choose `always` if you want a veto on each command.
+With sudo under `auth`, a fresh login means agents run root commands without asking, for as long as sudo remembers it, and a `NOPASSWD` rule in your sudoers means no prompt at all for the commands it covers. Choose `always` if you want a veto on each sudo command too. Polkit backends always require review because their system prompt cannot display the captured stdin and full request context. `always` does not add a second review to those backends. An automatic pkexec-to-sudo fallback reuses the approval for the same request; only authentication may be requested again.
 
 ## Backends
 
@@ -57,13 +57,13 @@ Chosen by, in order: `AGENT_SUDO_BACKEND`, then `backend = ...` in the same conf
 | backend | how authentication works |
 |---|---|
 | `sudo` | your sudo login. While it's fresh, nothing to type; when it has expired, agent-sudo's password dialog (`sudo -A`). A successful run renews it, as in a terminal. |
-| `pkexec` | the desktop's polkit prompt, every time |
-| `run0` | the desktop's polkit prompt, via systemd; polkit then remembers the approval for a few minutes |
+| `pkexec` | our request review, followed by the desktop's polkit authentication |
+| `run0` | our request review every time, followed by polkit authentication via systemd if needed; remembered authentication does not skip review |
 | `auto` | inside a `no_new_privs` sandbox: run0 if the system bus is reachable, otherwise refuse with a hint to re-run outside the sandbox. Else sudo if you're in the `sudo`, `wheel` or `admin` group, else pkexec if a polkit agent is running, else sudo |
 
 How long a login is remembered is sudo's or polkit's setting, not agent-sudo's: `timestamp_timeout` and `timestamp_type` in sudoers (with `timestamp_type=global`, one login covers every terminal and agent), and the polkit action's `auth_admin_keep` for run0.
 
-Requests over 15 lines or 1500 characters open a scrollable review window first. Piped or heredoc stdin is captured and shown, and must end within 10 seconds; binary stdin is shown as size and hash only.
+Requests whose command, agent name, reason and working directory do not fit a compact label open a scrollable review window first. Long lines and multiline explanations are preserved in full in that window. Piped or heredoc stdin is captured and shown, and must end within 10 seconds; binary stdin is shown as size and hash only.
 
 ## Exit codes
 
@@ -100,11 +100,19 @@ A command guard that intercepts the agent's shell commands closes this gap. It s
 
 ## Tests
 
+[GitHub Actions CI](https://github.com/citizenu03bb/agent-sudo/actions/workflows/ci.yml) runs on pushes and pull requests, on Ubuntu 22.04 and 24.04. It checks shell syntax, runs the simulated-backend suite, and measures real Zenity dialogs under Xvfb on an 800 × 600 screen. Test commands never escalate privileges.
+
 ```bash
 tests/run.sh
 ```
 
-Fake `zenity`, `sudo`, `pkexec`, `run0`, `pkcheck` and `id` (`tests/fakebin`) stand in for the real ones, so the tests never run anything as root or show a real prompt. They cover fresh and expired logins, both `confirm` settings, wrong passwords and crashed dialogs as well as denials. They use throwaway XDG directories and leave your log and config alone.
+Fake `zenity`, `sudo`, `pkexec`, `run0`, `pkcheck` and `id` (`tests/fakebin`) stand in for the real ones, so the tests never run anything as root or show a real prompt. They cover fresh and expired logins, both `confirm` settings, wrong passwords, failed reviews, polkit review before execution, stdin preservation and reuse of approval on pkexec-to-sudo fallback. They use throwaway XDG directories and leave your log and config alone.
+
+Real Zenity layout checks (requires Xvfb and xwininfo; no password or root command):
+
+```bash
+xvfb-run -a -s '-screen 0 800x600x24' python3 tests/dialog-geometry.py
+```
 
 ### Dry-run mode
 

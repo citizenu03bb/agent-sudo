@@ -1,6 +1,6 @@
 # agent-sudo
 
-Lets coding agents run root commands even though they have no terminal. While your sudo or polkit login is still fresh, requests run without interrupting you. When a password is needed, a desktop prompt names the agent and shows the exact command, any piped-in content, the agent's stated reason and the working directory. Every request is logged, and your password goes from the prompt to sudo or polkit, never through the agent.
+Lets coding agents run root commands even though they have no terminal. With sudo and the default settings, requests run without interrupting you while your login is still fresh. With pkexec or run0, a separate Approve / Deny review always comes before system authentication. When a password is needed, a desktop prompt names the agent and shows the exact command, any piped-in content, the agent's stated reason and the working directory. Every request is logged, and your password goes from the prompt to sudo or polkit, never through the agent.
 
 ```bash
 agent-sudo --reason "install foo from the distro repo" -- sh -c 'apt-get update && apt-get install -y foo'
@@ -12,7 +12,7 @@ Agents can't answer sudo's password prompt, so they fail or you copy commands ac
 
 ## Settings
 
-- `confirm = auth` (default): prompt only when a password is needed. `confirm = always`: an Approve / Deny dialog before every command as well.
+- `confirm = auth` (default): sudo prompts only when authentication is needed. `confirm = always`: review every sudo command too. With pkexec/run0, both settings require an Approve / Deny review before authentication, including when authentication is cached.
 - `backend = auto` (default), `sudo`, `pkexec` or `run0`.
 
 Both go in `~/.config/agent-sudo/config`.

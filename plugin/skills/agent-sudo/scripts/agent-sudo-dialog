@@ -13,7 +13,9 @@ set -u
 [ -n "${AGENT_SUDO_STATUS-}" ] && [ -r "${AGENT_SUDO_REVIEW-}" ] \
   || { echo "agent-sudo-dialog: only agent-sudo may call this" >&2; exit 1; }
 
-INLINE_MAX_LINES=15 INLINE_MAX_CHARS=1500
+# Keep all caller-controlled text small enough for a non-scrolling label.
+# Byte lengths are conservative for UTF-8; never truncate the actual request.
+INLINE_MAX_LINES=8 INLINE_MAX_COLUMNS=48
 mode=${AGENT_SUDO_MODE:-askpass}
 timeout=${AGENT_SUDO_TIMEOUT:-180}
 
@@ -25,14 +27,25 @@ given() { echo $((tries + 1)) >"$tries_file"; }
 deny_from() { [ "$1" -eq 5 ] && record timeout || record denied; exit 1; }
 
 lines=$(wc -l <"$AGENT_SUDO_REVIEW")
-chars=$(wc -c <"$AGENT_SUDO_REVIEW")
-inline=0
-[ "$lines" -le $INLINE_MAX_LINES ] && [ "$chars" -le $INLINE_MAX_CHARS ] && inline=1
-
 context="Why (agent's words, unverified):
         ${AGENT_SUDO_REASON}
 
 Where:  ${AGENT_SUDO_CWD}"
+inline=0
+if {
+  printf '%s wants to run as root:\n\n' "$AGENT_SUDO_AGENT"
+  sed 's/^/    /' "$AGENT_SUDO_REVIEW"
+  printf '\n%s\n' "$context"
+} | LC_ALL=C awk \
+    -v lines="$INLINE_MAX_LINES" -v columns="$INLINE_MAX_COLUMNS" \
+    'length > columns { large=1 } END { exit (large || NR > lines) }'; then
+  inline=1
+fi
+if [ $inline -eq 1 ]; then
+  what="${AGENT_SUDO_AGENT} wants to run as root:
+
+$(sed 's/^/    /' "$AGENT_SUDO_REVIEW")"
+fi
 
 # The long form: everything in one scrollable page.
 review_window() {  # $1 = ok label
@@ -44,19 +57,9 @@ review_window() {  # $1 = ok label
     cat "$AGENT_SUDO_REVIEW"
   } >"$page"
   zenity --text-info --filename="$page" --font="monospace 10" \
-    --title="agent-sudo: review root request (${lines} lines)" --width=900 --height=700 \
+    --title="agent-sudo: review root request (${lines} lines)" --width=680 --height=480 \
     --ok-label="$1" --cancel-label=Deny --timeout="$timeout" 2>/dev/null
 }
-
-# zenity --entry renders --text literally (no Pango markup), so keep it plain.
-if [ $inline -eq 1 ]; then
-  what="${AGENT_SUDO_AGENT} wants to run as root:
-
-$(sed 's/^/    /' "$AGENT_SUDO_REVIEW")"
-else
-  what="${AGENT_SUDO_AGENT} wants to run as root the ${lines}-line request
-shown in the review window."
-fi
 
 if [ "$mode" = review ]; then
   if [ $inline -eq 1 ]; then
@@ -82,9 +85,7 @@ retry=''
 if [ "$mode" = password ]; then
   # Already reviewed and approved: just say what the password is for.
   title="agent-sudo: password"
-  text="${retry}You approved this request from ${AGENT_SUDO_AGENT}:
-
-$(head -n 3 "$AGENT_SUDO_REVIEW" | cut -c1-120 | sed 's/^/    /')$([ "$lines" -gt 3 ] && printf '\n    …')
+  text="${retry}You approved the request in the review window.
 
 sudo needs your password to run it, and then remembers your login for a
 few minutes."
@@ -93,6 +94,11 @@ else
   # askpass: the password prompt is the review.
   if [ $inline -eq 0 ] && [ "$tries" -eq 0 ]; then
     review_window "Continue to approval" || deny_from $?
+  fi
+  # Never put oversized metadata back into the password dialog after review.
+  if [ $inline -eq 0 ]; then
+    what="The full request was shown in the review window."
+    context=''
   fi
   title="agent-sudo: root request"
   text="${retry}${what}

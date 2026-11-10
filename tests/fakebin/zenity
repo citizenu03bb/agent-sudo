@@ -21,6 +21,7 @@ case ${FAKE_ZENITY_ANSWER:-deny} in
   approve)
     case " $* " in *" --entry "*) printf '%s\n' "${FAKE_ZENITY_PASSWORD:-secret}" ;; esac
     exit 0 ;;
+  timeout) exit 5 ;;
   crash) kill -9 "$PPID"; exit 1 ;;
 esac
 case ${AGENT_SUDO_MODE-} in askpass|collect|feed)

@@ -3,8 +3,8 @@
 # Codex, Pi, Antigravity), with a desktop prompt when authentication is needed.
 #
 # Consent (AGENT_SUDO_CONFIRM, else `confirm =` in agent-sudo/config):
-#   auth    (default) no dialog of agent-sudo's own: the backend's remembered
-#           login decides. A prompt appears only when it asks for the password.
+#   auth    (default) sudo prompts only when it needs authentication.
+#           Polkit backends always require a separate request review.
 #   always  an Approve / Deny dialog before every command, then the backend's
 #           prompt if it needs one.
 # Backends (AGENT_SUDO_BACKEND, else `backend =` in agent-sudo/config under
@@ -33,8 +33,9 @@ Dry run: AGENT_SUDO_DRY_RUN=FILE records each request as a JSON line and
 Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
          ~/.config/agent-sudo/config (then /etc/xdg/agent-sudo/config).
 Confirm: AGENT_SUDO_CONFIRM=auth|always, or `confirm = ...` there. auth
-         (default) prompts only when authentication is needed; always adds an
-         Approve / Deny dialog before every command.
+         (default) lets sudo prompt only when authentication is needed.
+         always adds a review before every sudo command. Polkit backends
+         always require review, with either setting.
 Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
             otherwise the command's own exit code.
 Log: ~/.local/state/agent-sudo/log.tsv
@@ -272,44 +273,47 @@ require_approval() {  # $1 = the dialog's exit code
   denied review-failed "not approved: the review dialog failed (exit $1), so nothing was run"
 }
 
+# Internal state only: reuse review for the same request on pkexec fallback.
+reviewed=0
+review_request() {
+  AGENT_SUDO_MODE=review "$dialog" </dev/null
+  require_approval $?
+  reviewed=1
+}
+
 run_sudo() {
   # auth: no dialog of our own; sudo uses the user's login if it is still fresh
   # (or a NOPASSWD rule), and otherwise asks through the password dialog, which
   # shows the whole request. No -k: a successful run renews the login.
   # always: an Approve click first, then the password dialog only if sudo asks.
   local mode=askpass
-  if [ "$confirm" = always ]; then
-    AGENT_SUDO_MODE=review AGENT_SUDO_HINT="Approve to run it. If sudo needs your password, it will ask next." \
-      "$dialog" </dev/null
-    require_approval $?
-    mode=password
+  if [ "$reviewed" -eq 0 ] && [ "$confirm" = always ]; then
+    AGENT_SUDO_HINT="Approve to run it. If sudo needs your password, it will ask next." review_request
   fi
+  [ "$reviewed" -eq 0 ] || mode=password
   AGENT_SUDO_MODE=$mode SUDO_ASKPASS=$dialog sudo -A -- "$@"
   rc=$?
   case $(tail -n1 "$status") in
     denied)  denied denied "denied by $human at the password prompt" ;;
     timeout) denied timeout "timed out at the password prompt" ;;
   esac
-  if [ "$confirm" = always ] || [ -s "$tmp/tries" ]; then log approved "$rc"
+  if [ "$reviewed" -eq 1 ] || [ -s "$tmp/tries" ]; then log approved "$rc"
   else log cached "$rc"; fi   # no prompt: a fresh sudo login or a NOPASSWD rule
   exit $rc
 }
 
 [ "$backend" = sudo ] && run_sudo "$@"
 
-# pkexec / run0: polkit authenticates (pkexec every time, run0 remembers a few
-# minutes); with confirm = always, our Approve dialog comes first.
-if [ "$confirm" = always ]; then
-  AGENT_SUDO_MODE=review "$dialog" </dev/null
-  require_approval $?
-fi
+# Polkit authenticates, but cannot display our captured stdin and context.
+# Always review first, even with cached authorization or confirm=auth.
+review_request
 
 if [ "$backend" = pkexec ]; then
   run_polkit pkexec --disable-internal-agent --keep-cwd "$@"
   if grep -q 'Error executing command as another user' "$tmp/err" 2>/dev/null; then
     if grep -q 'No authentication agent found' "$tmp/err" && [ "$want" = auto ]; then
       echo "agent-sudo: no polkit agent answered; falling back to sudo" >&2
-      backend=sudo; : >"$status"
+      backend=sudo
       run_sudo "$@"
     fi
     grep -q 'dismissed' "$tmp/err" && denied auth-dismissed "cancelled at the password prompt"
@@ -322,5 +326,5 @@ else
     denied auth-failed "not authorized by polkit"
   fi
 fi
-if [ "$confirm" = always ]; then log approved "$rc"; else log polkit "$rc"; fi
+log approved "$rc"
 exit $rc

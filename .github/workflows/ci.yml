@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install GUI test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y zenity xvfb xauth x11-utils fonts-dejavu-core
+      - name: Check shell syntax
+        run: |
+          bash -n install.sh
+          bash -n plugin/skills/agent-sudo/scripts/agent-sudo
+          bash -n plugin/skills/agent-sudo/scripts/agent-sudo-dialog
+          bash -n tests/run.sh
+          for script in tests/fakebin/*; do bash -n "$script"; done
+      - name: Functional tests (simulated backends, no root commands)
+        run: bash tests/run.sh
+      - name: Real Zenity geometry on an 800 x 600 screen
+        run: |
+          zenity --version
+          xvfb-run -a -s '-screen 0 800x600x24' python3 tests/dialog-geometry.py
