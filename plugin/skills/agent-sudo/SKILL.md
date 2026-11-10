@@ -8,7 +8,7 @@ description: Run a command that needs root on the user's machine. Use whenever a
 You have no terminal, so `sudo` can't ask you for a password. Every root command goes through `agent-sudo`:
 
 ```bash
-agent-sudo --reason "<one honest line: why this needs root>" -- <command> [args...]
+agent-sudo --reason "<honest explanation of why this needs root>" -- <command> [args...]
 ```
 
 If `agent-sudo` isn't on your PATH, use the copy bundled with this skill: `scripts/agent-sudo` in this skill's directory (the folder containing this SKILL.md), called by its full path. It needs a desktop session (zenity, plus sudo, pkexec or run0) on Linux.
@@ -46,7 +46,7 @@ Every request is logged to `~/.local/state/agent-sudo/log.tsv`. The user can mak
 
 ## Backends and prompts
 
-The user picks the backend and the prompting; you don't. With sudo and the default `confirm = auth`, a request runs without any prompt while the user's login is fresh; otherwise the password dialog shows the request, with a separate review first for large requests. With sudo and `confirm = always`, an Approve / Deny review comes before every command. With pkexec/run0, both settings always require review of the command, reason, directory and captured stdin before system authentication. Cached authentication does not skip that review. A pkexec-to-sudo fallback reuses the existing approval for the same request. Either way, write the reason for a human who may read it in a prompt or the log later.
+The user picks the backend and the prompting; you don't. Do not override their confirmation setting or configuration paths. A configured `always` cannot be weakened with `AGENT_SUDO_CONFIRM=auth`. With sudo and the default `confirm = auth`, a request runs without any prompt while the user's login is fresh; otherwise the password dialog shows the request, with a separate review first for large requests. With sudo and `confirm = always`, an Approve / Deny review comes before every command. With pkexec/run0, both settings always require review of the command, reason, directory and captured stdin before system authentication. Cached authentication does not skip that review. A pkexec-to-sudo fallback reuses the existing approval for the same request. Either way, write the reason for a human who may read it in a prompt or the log later.
 
 ## Per-agent notes
 

@@ -187,5 +187,30 @@ for b in pkexec run0; do
   [ ! -e "$ran" ];                                         check "$b: crashed review, nothing ran" 0 $?
 done
 
+# Configured always cannot be weakened by an environment override.
+mkdir -p "$XDG_CONFIG_HOME/agent-sudo"
+echo 'confirm = always' >"$XDG_CONFIG_HOME/agent-sudo/config"
+attempt AGENT_SUDO_CONFIRM=auth FAKE_SUDO_CACHED=1
+check "configured always rejects environment downgrade" 77 $?
+[ ! -e "$ran" ] && [ "$(dialogs)" = 1 ]
+check "downgrade attempt did not execute" 0 $?
+rm "$XDG_CONFIG_HOME/agent-sudo/config"
+
+# All untrusted TSV fields retain their content without creating new records.
+before=$(wc -l <"$XDG_STATE_HOME/agent-sudo/log.tsv")
+run env AGENT_SUDO_BACKEND=sudo FAKE_SUDO_CACHED=1 agent-sudo \
+  --agent $'agent\tname\nnext' --reason $'first\nsecond\tfield\rslash\\end' -- true
+check "multiline reason accepted" 0 $?
+[ "$(wc -l <"$XDG_STATE_HOME/agent-sudo/log.tsv")" = "$((before + 1))" ]
+check "multiline reason creates exactly one log record" 0 $?
+python3 - "$XDG_STATE_HOME/agent-sudo/log.tsv" <<'PYTEST'
+import sys
+row = open(sys.argv[1]).read().splitlines()[-1].split('\t')
+assert len(row) == 8
+assert row[1] == r'agent\tname\nnext'
+assert row[5] == r'first\nsecond\tfield\rslash\\end'
+PYTEST
+check "TSV preserves escaped agent and reason" 0 $?
+
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

@@ -36,6 +36,8 @@ jobs:
           bash -n plugin/skills/agent-sudo/scripts/agent-sudo-dialog
           bash -n tests/run.sh
           for script in tests/fakebin/*; do bash -n "$script"; done
+      - name: Installer checks (temporary destinations)
+        run: python3 tests/install.py
       - name: Functional tests (simulated backends, no root commands)
         run: bash tests/run.sh
       - name: Real Zenity geometry on an 800 x 600 screen

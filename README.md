@@ -14,34 +14,58 @@ It decides how an agent gets root, not which commands may run. For rules such as
 
 ## Install
 
-Linux desktop. Needs bash, zenity, and at least one of sudo, pkexec (polkit) or run0 (systemd 256+). On Windows, WSL with WSLg (which runs Linux GUI apps such as zenity) should work, but is untested.
+Requires a Linux graphical desktop, Bash, Zenity, GNU core utilities, and at least one of `sudo`, `pkexec` or `run0` (systemd 256+). The installer does not install system packages or configure privilege policies. WSLg is untested; native Windows and macOS are unsupported.
 
-**As a skill, for any agent** ([skills.sh](https://skills.sh)):
+### From a clone
 
 ```bash
-npx skills add citizenu03bb/agent-sudo
+git clone https://github.com/citizenu03bb/agent-sudo.git
+cd agent-sudo
+./install.sh
 ```
 
-**As a Claude Code plugin:**
+This links the command into `~/.local/bin` and detects existing agent configuration directories. It creates missing skill directories for detected agents. For a fresh agent installation, select one or more explicitly:
+
+```bash
+./install.sh --agent claude --agent codex
+```
+
+Supported names: `claude`, `codex`, `pi`, `antigravity`. Targets are respectively `~/.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `~/.gemini/config/skills`. Existing files or real skill directories are never overwritten; resolve a reported conflict before retrying. Existing symlinks are updated.
+
+If `~/.local/bin` is absent from PATH, add this to your shell startup file and open a new shell (or run it in your current shell):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Keep the clone at the same path: these are symlinks, not copies. To update, run `git pull --ff-only` from the clone. Start a new agent session to reload the skill. To uninstall, remove only the installed symlinks; configuration and logs are retained. `--home /absolute/directory` selects an alternate installation destination, mainly for tests.
+
+### As a skill for a supported agent
+
+Requires Node.js/npm. The [skills CLI](https://github.com/vercel-labs/skills) installs the skill and its bundled scripts, not a global `agent-sudo` executable:
+
+```bash
+npx skills add citizenu03bb/agent-sudo --skill agent-sudo
+```
+
+Follow the CLI's agent and scope selection. Use `--global` for a user-wide installation rather than project scope. Agents invoke the bundled `scripts/agent-sudo` when it is not on PATH. Use `npx skills update` to check for updates.
+
+### Claude Code: this repository's custom marketplace
+
+**This plugin is not published in Claude's official marketplace.** These commands add this repository as a custom marketplace; run them inside Claude Code:
 
 ```text
 /plugin marketplace add citizenu03bb/agent-sudo
 /plugin install agent-sudo@agent-sudo
 ```
 
-**From a clone**, which also puts `agent-sudo` on your PATH:
+The plugin bundles the skill and scripts; it does not install a global executable or Linux dependencies. For updates, refresh this custom marketplace and update the plugin through Claude Code's plugin manager. Choose one skill installation method per agent to avoid duplicate copies.
 
-```bash
-git clone https://github.com/citizenu03bb/agent-sudo && cd agent-sudo && ./install.sh
-```
-
-`install.sh` symlinks `plugin/skills/agent-sudo/scripts/agent-sudo` into `~/.local/bin` and `plugin/skills/agent-sudo/` into the skill directories of Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`), Pi (`~/.pi/agent/skills`) and Antigravity, both IDE and `agy` CLI (`~/.gemini/config/skills`), whichever exist. With the other two methods the wrapper ships inside the skill (`scripts/`) and agents call it from there.
-
-The skill tells agents to use agent-sudo instead of calling or probing sudo, to treat polkit-backed commands as root actions, to batch privileged steps into one request, and to stop after a deny.
+The skill instructs agents to route privileged actions through the wrapper, include their justification, and stop after a refusal. It cannot enforce those instructions against a hostile agent.
 
 ## Consent
 
-Set with `AGENT_SUDO_CONFIRM` or `confirm = ...` in `~/.config/agent-sudo/config` (then `/etc/xdg/agent-sudo/config`).
+Set with `confirm = ...` in `~/.config/agent-sudo/config` (then `/etc/xdg/agent-sudo/config`). `AGENT_SUDO_CONFIRM` may request `always`, but cannot downgrade an effective configured `always` to `auth`. This is a configuration safeguard, not an isolation boundary: the same user can still modify their config or XDG search paths.
 
 | `confirm` | what you see |
 |---|---|
@@ -74,7 +98,7 @@ Requests whose command, agent name, reason and working directory do not fit a co
 | 64 | usage error |
 | other | the command's own exit code |
 
-Every request is logged to `~/.local/state/agent-sudo/log.tsv`: time, agent, outcome, exit code, directory, reason, command, backend.
+Every request is logged to `~/.local/state/agent-sudo/log.tsv`: time, agent, outcome, exit code, directory, reason, command, backend. New records escape backslashes, tabs, newlines and carriage returns as `\\`, `\t`, `\n` and `\r` in every field, so multiline explanations remain one physical record. Existing records are not rewritten. The dialog preserves the original multiline text.
 
 ## Security model
 
@@ -100,7 +124,7 @@ A command guard that intercepts the agent's shell commands closes this gap. It s
 
 ## Tests
 
-[GitHub Actions CI](https://github.com/citizenu03bb/agent-sudo/actions/workflows/ci.yml) runs on pushes and pull requests, on Ubuntu 22.04 and 24.04. It checks shell syntax, runs the simulated-backend suite, and measures real Zenity dialogs under Xvfb on an 800 × 600 screen. Test commands never escalate privileges.
+[GitHub Actions CI](https://github.com/citizenu03bb/agent-sudo/actions/workflows/ci.yml) runs on pushes and pull requests, on Ubuntu 22.04 and 24.04. It checks shell syntax, runs the simulated-backend suite, checks installation into temporary destinations, and measures real Zenity dialogs under Xvfb on an 800 × 600 screen. Test commands never escalate privileges.
 
 ```bash
 tests/run.sh

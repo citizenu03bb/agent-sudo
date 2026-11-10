@@ -2,7 +2,7 @@
 # agent-sudo — run one root command on behalf of a coding agent (Claude Code,
 # Codex, Pi, Antigravity), with a desktop prompt when authentication is needed.
 #
-# Consent (AGENT_SUDO_CONFIRM, else `confirm =` in agent-sudo/config):
+# Consent (`confirm =` in config is a floor; env may strengthen it):
 #   auth    (default) sudo prompts only when it needs authentication.
 #           Polkit backends always require a separate request review.
 #   always  an Approve / Deny dialog before every command, then the backend's
@@ -35,7 +35,8 @@ Backend: AGENT_SUDO_BACKEND=auto|sudo|pkexec|run0, or `backend = ...` in
 Confirm: AGENT_SUDO_CONFIRM=auth|always, or `confirm = ...` there. auth
          (default) lets sudo prompt only when authentication is needed.
          always adds a review before every sudo command. Polkit backends
-         always require review, with either setting.
+         always require review, with either setting. A configured always
+         cannot be weakened by AGENT_SUDO_CONFIRM=auth.
 Exit codes: 77 denied or timed out · 69 no way to ask the user · 64 usage
             otherwise the command's own exit code.
 Log: ~/.local/state/agent-sudo/log.tsv
@@ -60,7 +61,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ $# -gt 0 ] || usage
-[ -n "$reason" ] || die "--reason is required: say in one line why this needs root"
+[ -n "$reason" ] || die "--reason is required: explain why this needs root"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout must be whole seconds"
 [ "$EUID" -ne 0 ] || die "already root; run the command directly"
 
@@ -99,10 +100,25 @@ cmd_display=${cmd_display% }
 state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/agent-sudo
 mkdir -p "$state_dir" 2>/dev/null
 backend=-
+# Escape every TSV field: one physical line per event, multiline text retained.
+log_field() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//$'\t'/\\t}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  printf '%s' "$value"
+}
 log() {
-  local one_line=${cmd_display//$'\n'/⏎}
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -Is)" "$agent" "$1" "$2" \
-    "$PWD" "${reason//$'\t'/ }" "${one_line//$'\t'/ }" "$backend" 2>/dev/null >>"$state_dir/log.tsv"
+  local field separator=''
+  {
+    for field in "$(date -Is)" "$agent" "$1" "$2" "$PWD" "$reason" "$cmd_display" "$backend"; do
+      printf '%s' "$separator"
+      log_field "$field"
+      separator=$'\t'
+    done
+    printf '\n'
+  } 2>/dev/null >>"$state_dir/log.tsv"
 }
 
 config_get() {  # $1 = key, $2 = default
@@ -150,8 +166,11 @@ if [ -z "${WAYLAND_DISPLAY-}${DISPLAY-}" ]; then
 fi
 
 want=${AGENT_SUDO_BACKEND:-$(config_get backend auto)}
-confirm=${AGENT_SUDO_CONFIRM:-$(config_get confirm auth)}
+configured_confirm=$(config_get confirm auth)
+case $configured_confirm in auth|always) ;; *) die "unknown configured confirm setting '$configured_confirm'" ;; esac
+confirm=${AGENT_SUDO_CONFIRM:-$configured_confirm}
 case $confirm in auth|always) ;; *) die "unknown confirm setting '$confirm' (auth, always)" ;; esac
+[ "$configured_confirm" != always ] || confirm=always
 case $want in
   sudo|pkexec|run0) backend=$want ;;
   auto)

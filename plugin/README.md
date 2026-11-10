@@ -10,12 +10,23 @@ agent-sudo --reason "install foo from the distro repo" -- sh -c 'apt-get update 
 
 Agents can't answer sudo's password prompt, so they fail or you copy commands across by hand. agent-sudo gives them the prompt they're missing: you type your password about as often as you would in a terminal, and you can see afterwards who asked for what. On a desktop, plain `systemctl restart` or `pkcon install` also escalate through polkit with a prompt that can't say who asked; the skill routes those through agent-sudo too.
 
+## Install
+
+This repository provides a **custom Claude Code marketplace**, not a listing in Claude's official marketplace:
+
+```text
+/plugin marketplace add citizenu03bb/agent-sudo
+/plugin install agent-sudo@agent-sudo
+```
+
+Install Linux dependencies separately. For clone installation, PATH setup, other supported agents and updates, see the [installation guide](https://github.com/citizenu03bb/agent-sudo#install).
+
 ## Settings
 
 - `confirm = auth` (default): sudo prompts only when authentication is needed. `confirm = always`: review every sudo command too. With pkexec/run0, both settings require an Approve / Deny review before authentication, including when authentication is cached.
 - `backend = auto` (default), `sudo`, `pkexec` or `run0`.
 
-Both go in `~/.config/agent-sudo/config`.
+Both go in `~/.config/agent-sudo/config`. An environment override cannot weaken a configured `confirm = always`.
 
 ## What the skill teaches agents
 

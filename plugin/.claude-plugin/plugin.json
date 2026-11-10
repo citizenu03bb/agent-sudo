@@ -1,7 +1,7 @@
 {
   "name": "agent-sudo",
-  "version": "0.4.0",
-  "description": "Root for coding agents without a terminal: uses your remembered sudo or polkit login, shows a desktop prompt with the agent, command and reason when a password is needed, and logs every request. Optional Approve dialog per command. Linux desktop.",
+  "version": "0.5.0",
+  "description": "Root commands for coding agents on Linux: bounded request dialogs, mandatory review for polkit, optional per-command sudo review, and escaped audit logs.",
   "author": {
     "name": "citizenu03bb",
     "url": "https://github.com/citizenu03bb"
