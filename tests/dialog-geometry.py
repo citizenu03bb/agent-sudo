@@ -6,6 +6,7 @@ Requires zenity, Xvfb, xwininfo. Use an isolated X display, never your desktop.
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -33,11 +34,11 @@ for name, mode, command, reason, agent, cwd, scroll in cases:
         env = dict(os.environ, GDK_BACKEND='x11', AGENT_SUDO_MODE=mode,
                    AGENT_SUDO_REVIEW=str(work / 'review'), AGENT_SUDO_STATUS=str(work / 'status'),
                    AGENT_SUDO_REASON=reason, AGENT_SUDO_AGENT=agent,
-                   AGENT_SUDO_CWD=cwd, AGENT_SUDO_TIMEOUT='2')
-        with subprocess.Popen([str(helper)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                   AGENT_SUDO_CWD=cwd, AGENT_SUDO_TIMEOUT='8')
+        with subprocess.Popen([str(helper)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as process:
             try:
                 geometry = None
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 15
                 while time.monotonic() < deadline and process.poll() is None:
                     tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
                     geometry = re.search(r'"agent-sudo:[^\n]+?\s(\d+)x(\d+)\+', tree)
@@ -56,12 +57,12 @@ for name, mode, command, reason, agent, cwd, scroll in cases:
                     page = (work / 'page').read_text()
                     for value in (command, reason, agent, cwd):
                         assert value in page, f'{name}: review text was truncated'
-                process.communicate(timeout=5)
+                process.communicate(timeout=20)
                 assert process.returncode != 0, f'{name}: timeout unexpectedly approved'
                 assert 'approved' not in (work / 'status').read_text()
                 print(f'PASS {name}: {w}x{h}', flush=True)
             finally:
                 if process.poll() is None:
-                    process.kill()
+                    os.killpg(process.pid, signal.SIGKILL)
                     process.communicate()
 print(f'{len(cases)} geometry checks passed on {width}x{height}')

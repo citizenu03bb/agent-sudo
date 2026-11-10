@@ -30,7 +30,7 @@ jobs:
       - name: Install GUI test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y zenity xvfb xauth x11-utils fonts-dejavu-core
+          sudo apt-get install --no-install-recommends -y zenity xvfb xauth x11-utils fonts-dejavu-core dbus-daemon
       - name: Check shell syntax
         run: |
           bash -n install.sh
@@ -47,4 +47,4 @@ jobs:
       - name: Real Zenity geometry on an 800 x 600 screen
         run: |
           xvfb-run -a zenity --version
-          xvfb-run -a -s '-screen 0 800x600x24' python3 tests/dialog-geometry.py
+          dbus-run-session -- xvfb-run -a -s '-screen 0 800x600x24' python3 tests/dialog-geometry.py
