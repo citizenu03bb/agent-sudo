@@ -10,7 +10,7 @@
       "name": "agent-sudo",
       "source": "./plugin",
       "description": "Root commands for coding agents on Linux: bounded request dialogs, mandatory review for polkit, optional per-command sudo review, and escaped audit logs.",
-      "version": "0.5.0"
+      "version": "0.5.1"
     }
   ]
 }
